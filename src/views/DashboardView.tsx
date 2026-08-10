@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
-import { User, ShoppingBag, Calendar, Heart, Gift, Award, HelpCircle, MapPin, Phone, RefreshCw, Star, Trash2 } from 'lucide-react';
+import { User, ShoppingBag, Calendar, Heart, Gift, Award, HelpCircle, MapPin, Phone, RefreshCw, Star, Trash2, LogOut } from 'lucide-react';
 import { Order, Product, ReferralMilestone } from '../types';
+import { signOutCurrentUser } from '../lib/authService';
 
 interface DashboardViewProps {
   orders: Order[];
@@ -114,6 +115,19 @@ export default function DashboardView({
               )}
             </button>
           ))}
+
+          <div className="pt-2 border-t border-white/10 mt-2">
+            <button
+              onClick={async () => {
+                await signOutCurrentUser();
+                onNavigate('home');
+              }}
+              className="w-full flex items-center gap-2.5 rounded-xl px-4 py-3 text-xs font-bold text-red-300 hover:bg-red-500/20 transition text-left cursor-pointer"
+            >
+              <LogOut className="h-4.5 w-4.5 text-red-400" />
+              <span>Sign Out / Logout</span>
+            </button>
+          </div>
         </div>
 
         {/* Right Active Panel Area */}

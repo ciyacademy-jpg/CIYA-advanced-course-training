@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, ShoppingBasket, Heart, User, MapPin, ChevronDown, Sparkles, Flame, Calendar, Gift, Menu, X, Check } from 'lucide-react';
+import { Search, ShoppingBasket, Heart, User, MapPin, ChevronDown, Sparkles, Flame, Calendar, Gift, Menu, X, Check, LogIn, LogOut } from 'lucide-react';
 import { Product } from '../types';
+import { User as FirebaseUser } from 'firebase/auth';
+import { signOutCurrentUser } from '../lib/authService';
 
 interface NavbarProps {
   currentView: string;
@@ -11,6 +13,7 @@ interface NavbarProps {
   products: Product[];
   onQuickView: (product: Product) => void;
   onAddToCart: (product: Product, qty: number) => void;
+  currentUser?: FirebaseUser | null;
 }
 
 const locations = [
@@ -43,7 +46,8 @@ export default function Navbar({
   wishlistCount,
   products,
   onQuickView,
-  onAddToCart
+  onAddToCart,
+  currentUser
 }: NavbarProps) {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(locations[0]);
@@ -51,6 +55,7 @@ export default function Navbar({
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [isMegaMenuOpen, setIsMegaMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
 
   const filteredSearchProducts = searchQuery.trim()
     ? products.filter(p =>
@@ -195,13 +200,81 @@ export default function Navbar({
               )}
             </button>
 
-            {/* Dashboard Link */}
-            <button
-              onClick={() => onNavigate('dashboard')}
-              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-full transition"
-            >
-              <User className="h-5.5 w-5.5" />
-            </button>
+            {/* Auth / Account Link */}
+            {currentUser ? (
+              <div className="relative">
+                <button
+                  onClick={() => setShowUserDropdown(!showUserDropdown)}
+                  className="flex items-center gap-1.5 py-1 px-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-full text-xs font-bold text-white transition cursor-pointer"
+                  title={`Signed in as ${currentUser.email}`}
+                >
+                  <div className="h-6 w-6 rounded-full bg-[#16A34A] text-[#FACC15] flex items-center justify-center font-black text-[10px]">
+                    {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : currentUser.email?.charAt(0).toUpperCase() || 'U'}
+                  </div>
+                  <span className="hidden md:inline max-w-[90px] truncate">{currentUser.displayName || currentUser.email?.split('@')[0]}</span>
+                  <ChevronDown className={`h-3 w-3 text-white/70 transition-transform ${showUserDropdown ? 'rotate-180' : ''}`} />
+                </button>
+
+                <AnimatePresence>
+                  {showUserDropdown && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                      className="absolute right-0 mt-2 w-56 rounded-2xl bg-[#0b2b16]/95 border border-white/20 backdrop-blur-2xl p-2 shadow-2xl z-50 text-white"
+                    >
+                      <div className="p-3 border-b border-white/10">
+                        <p className="text-xs font-bold text-white truncate">{currentUser.displayName || 'FreshBasket User'}</p>
+                        <p className="text-[10px] text-white/60 truncate font-mono">{currentUser.email}</p>
+                      </div>
+                      <div className="py-1 space-y-0.5 text-xs font-medium">
+                        <button
+                          onClick={() => {
+                            onNavigate('dashboard');
+                            setShowUserDropdown(false);
+                          }}
+                          className="w-full text-left px-3 py-2 hover:bg-white/10 rounded-xl flex items-center gap-2 text-white/90 cursor-pointer"
+                        >
+                          <User className="h-3.5 w-3.5 text-[#FACC15]" />
+                          <span>My Account Dashboard</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            onNavigate('dashboard?tab=orders');
+                            setShowUserDropdown(false);
+                          }}
+                          className="w-full text-left px-3 py-2 hover:bg-white/10 rounded-xl flex items-center gap-2 text-white/90 cursor-pointer"
+                        >
+                          <ShoppingBasket className="h-3.5 w-3.5 text-[#16A34A]" />
+                          <span>Order History</span>
+                        </button>
+                      </div>
+                      <div className="pt-1 border-t border-white/10">
+                        <button
+                          onClick={async () => {
+                            setShowUserDropdown(false);
+                            await signOutCurrentUser();
+                            onNavigate('home');
+                          }}
+                          className="w-full text-left px-3 py-2 hover:bg-red-500/20 rounded-xl flex items-center gap-2 text-red-300 font-bold text-xs cursor-pointer transition"
+                        >
+                          <LogOut className="h-3.5 w-3.5 text-red-400" />
+                          <span>Sign Out / Logout</span>
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ) : (
+              <button
+                onClick={() => onNavigate('auth')}
+                className="flex items-center gap-1.5 py-1.5 px-3 bg-[#16A34A] hover:bg-[#15803d] border border-white/20 rounded-full text-xs font-bold text-white shadow transition cursor-pointer"
+              >
+                <User className="h-4 w-4 text-white" />
+                <span className="hidden sm:inline">Sign In / Up</span>
+              </button>
+            )}
 
             {/* Cart Selector Panel Trigger */}
             <button
@@ -356,7 +429,28 @@ export default function Navbar({
 
             {/* Navigation Links */}
             <div className="mt-6 flex-1 space-y-3.5 flex flex-col justify-start">
-              <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider border-b border-white/10 pb-1">Shop & Discover</p>
+              <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider border-b border-white/10 pb-1">Account & Access</p>
+              <button
+                onClick={() => { onNavigate(currentUser ? 'dashboard' : 'auth'); setIsMobileMenuOpen(false); }}
+                className={`w-full text-left text-sm font-bold flex items-center gap-2 ${currentView === 'auth' || currentView === 'dashboard' ? 'text-[#FACC15]' : 'text-white/80'}`}
+              >
+                <span>👤 {currentUser ? `Account (${currentUser.email})` : 'Sign In / Sign Up'}</span>
+              </button>
+              {currentUser && (
+                <button
+                  onClick={async () => {
+                    setIsMobileMenuOpen(false);
+                    await signOutCurrentUser();
+                    onNavigate('home');
+                  }}
+                  className="w-full text-left text-sm font-bold flex items-center gap-2 text-red-300 hover:text-red-200"
+                >
+                  <LogOut className="h-4 w-4 text-red-400" />
+                  <span>Sign Out / Logout</span>
+                </button>
+              )}
+
+              <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider border-b border-white/10 pb-1 pt-2">Shop & Discover</p>
               <button
                 onClick={() => { onNavigate('home'); setIsMobileMenuOpen(false); }}
                 className={`w-full text-left text-sm font-bold flex items-center gap-2 ${currentView === 'home' ? 'text-[#FACC15]' : 'text-white/80'}`}

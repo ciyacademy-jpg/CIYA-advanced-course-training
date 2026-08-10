@@ -24,9 +24,11 @@ import RecipeHubView from './views/RecipeHubView';
 import MealPlannerView from './views/MealPlannerView';
 import BlogView from './views/BlogView';
 import StaticViews from './views/StaticViews';
+import AuthView from './views/AuthView';
 
 import { Product, CartItem, Order, LoyaltyReward } from './types';
-import { testFirebaseConnection } from './lib/firebase';
+import { testFirebaseConnection, auth } from './lib/firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
 
 // Loyalty Rewards database
 const initialRewards: LoyaltyReward[] = [
@@ -52,9 +54,15 @@ export default function App() {
   const [rewardsPoints, setRewardsPoints] = useState(1420);
   const [vouchersClaimed, setVouchersClaimed] = useState<string[]>([]);
 
-  // Seed default history order for realism and initialize Firebase connection
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  // Listen to Firebase Auth state changes
   useEffect(() => {
     testFirebaseConnection();
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+    });
+
     const defaultOrder: Order = {
       id: "FB-84210",
       items: [
@@ -80,7 +88,18 @@ export default function App() {
       estimatedArrival: "Delivered Successfully"
     };
     setOrders([defaultOrder]);
+
+    return () => unsubscribe();
   }, []);
+
+  // Strict Route Guard: Unverified users cannot access the dashboard
+  useEffect(() => {
+    if (activeView === 'dashboard') {
+      if (!currentUser || !currentUser.emailVerified) {
+        setActiveView('auth');
+      }
+    }
+  }, [activeView, currentUser]);
 
   // Global Cart Event Actions
   const handleAddToCart = (product: Product, qty: number) => {
@@ -190,12 +209,20 @@ export default function App() {
         products={products}
         onQuickView={handleQuickView}
         onAddToCart={handleAddToCart}
+        currentUser={currentUser}
       />
 
       {/* Main Routed Canvas Sections */}
       <main className="flex-1">
         
         {/* Render active View layouts */}
+        {activeView === 'auth' && (
+          <AuthView
+            currentUser={currentUser}
+            onNavigate={handleNavigate}
+          />
+        )}
+
         {activeView === 'home' && (
           <HomeView
             products={products}
