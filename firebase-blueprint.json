@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Customer delivery profile, address, and food sourcing preferences",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The unique Firebase Auth UID of the customer",
+          "maxLength": 128
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Full name of the recipient",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address",
+          "format": "email",
+          "maxLength": 150
+        },
+        "phoneNumber": {
+          "type": "string",
+          "description": "Contact phone number for logistics and dispatch riders",
+          "minLength": 7,
+          "maxLength": 30
+        },
+        "streetAddress": {
+          "type": "string",
+          "description": "Detailed street address and apartment or house number",
+          "minLength": 3,
+          "maxLength": 300
+        },
+        "cityArea": {
+          "type": "string",
+          "description": "Neighborhood or district area",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "state": {
+          "type": "string",
+          "description": "State within Nigeria",
+          "minLength": 2,
+          "maxLength": 50
+        },
+        "deliveryNotes": {
+          "type": "string",
+          "description": "Optional delivery instructions or gate security instructions",
+          "maxLength": 500
+        },
+        "dietaryPreference": {
+          "type": "string",
+          "description": "Primary grocery sourcing preference",
+          "maxLength": 100
+        },
+        "favoriteCategory": {
+          "type": "string",
+          "description": "Preferred delivery time window",
+          "maxLength": 100
+        },
+        "completedAt": {
+          "type": "string",
+          "description": "Timestamp formatted string when the profile was completed",
+          "maxLength": 100
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update",
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "userId",
+        "fullName",
+        "email",
+        "phoneNumber",
+        "streetAddress",
+        "cityArea",
+        "state"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Private user delivery profile and preferences strictly owned and accessed by {userId}"
+    }
+  }
+}

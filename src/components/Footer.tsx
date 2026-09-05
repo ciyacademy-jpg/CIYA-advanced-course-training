@@ -8,7 +8,7 @@ interface FooterProps {
 export default function Footer({ onNavigate }: FooterProps) {
   const handleNewsletterSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    alert("Ẹ ṣeun! Thanks for subscribing. You've unlocked 10% off your next FreshBasket order!");
+    alert("Thank you! Thanks for subscribing. You've unlocked 10% off your next FreshBasket order!");
   };
 
   return (
@@ -98,6 +98,7 @@ export default function Footer({ onNavigate }: FooterProps) {
             <li><button onClick={() => onNavigate('subscriptions')} className="hover:text-white transition text-left">Subscriptions</button></li>
             <li><button onClick={() => onNavigate('loyalty')} className="hover:text-white transition text-left">Loyalty & Rewards</button></li>
             <li><button onClick={() => onNavigate('blog')} className="hover:text-white transition text-left">Healthy Living Blog</button></li>
+            <li><button onClick={() => onNavigate('profile')} className="hover:text-white transition text-left text-[#FACC15] font-semibold">Member Profile Form</button></li>
             <li><button onClick={() => onNavigate('dashboard')} className="hover:text-white transition text-left">Customer Dashboard</button></li>
           </ul>
         </div>

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, ShoppingBasket, Heart, User, MapPin, ChevronDown, Sparkles, Flame, Calendar, Gift, Menu, X, Check, LogIn, LogOut } from 'lucide-react';
-import { Product } from '../types';
+import { Search, ShoppingBasket, Heart, User, MapPin, ChevronDown, Sparkles, Flame, Calendar, Gift, Menu, X, Check, LogIn, LogOut, UserCheck } from 'lucide-react';
+import { Product, UserProfileData } from '../types';
 import { User as FirebaseUser } from 'firebase/auth';
 import { signOutCurrentUser } from '../lib/authService';
+import { isProfileComplete } from '../lib/userProfileService';
 
 interface NavbarProps {
   currentView: string;
@@ -14,6 +15,7 @@ interface NavbarProps {
   onQuickView: (product: Product) => void;
   onAddToCart: (product: Product, qty: number) => void;
   currentUser?: FirebaseUser | null;
+  userProfile?: UserProfileData | null;
 }
 
 const locations = [
@@ -47,7 +49,8 @@ export default function Navbar({
   products,
   onQuickView,
   onAddToCart,
-  currentUser
+  currentUser,
+  userProfile
 }: NavbarProps) {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(locations[0]);
@@ -56,6 +59,9 @@ export default function Navbar({
   const [isMegaMenuOpen, setIsMegaMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showUserDropdown, setShowUserDropdown] = useState(false);
+
+  const navDisplayName = userProfile?.fullName || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Member';
+  const navInitial = navDisplayName.charAt(0).toUpperCase();
 
   const filteredSearchProducts = searchQuery.trim()
     ? products.filter(p =>
@@ -209,9 +215,9 @@ export default function Navbar({
                   title={`Signed in as ${currentUser.email}`}
                 >
                   <div className="h-6 w-6 rounded-full bg-[#16A34A] text-[#FACC15] flex items-center justify-center font-black text-[10px]">
-                    {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : currentUser.email?.charAt(0).toUpperCase() || 'U'}
+                    {navInitial}
                   </div>
-                  <span className="hidden md:inline max-w-[90px] truncate">{currentUser.displayName || currentUser.email?.split('@')[0]}</span>
+                  <span className="hidden md:inline max-w-[90px] truncate">{navDisplayName}</span>
                   <ChevronDown className={`h-3 w-3 text-white/70 transition-transform ${showUserDropdown ? 'rotate-180' : ''}`} />
                 </button>
 
@@ -224,23 +230,55 @@ export default function Navbar({
                       className="absolute right-0 mt-2 w-56 rounded-2xl bg-[#0b2b16]/95 border border-white/20 backdrop-blur-2xl p-2 shadow-2xl z-50 text-white"
                     >
                       <div className="p-3 border-b border-white/10">
-                        <p className="text-xs font-bold text-white truncate">{currentUser.displayName || 'FreshBasket User'}</p>
+                        <p className="text-xs font-bold text-white truncate">{navDisplayName}</p>
                         <p className="text-[10px] text-white/60 truncate font-mono">{currentUser.email}</p>
                       </div>
                       <div className="py-1 space-y-0.5 text-xs font-medium">
                         <button
                           onClick={() => {
-                            onNavigate('dashboard');
+                            onNavigate('profile');
                             setShowUserDropdown(false);
                           }}
-                          className="w-full text-left px-3 py-2 hover:bg-white/10 rounded-xl flex items-center gap-2 text-white/90 cursor-pointer"
+                          className="w-full text-left px-3 py-2 hover:bg-white/10 rounded-xl flex items-center justify-between text-white/90 cursor-pointer"
                         >
-                          <User className="h-3.5 w-3.5 text-[#FACC15]" />
-                          <span>My Account Dashboard</span>
+                          <div className="flex items-center gap-2">
+                            <UserCheck className="h-3.5 w-3.5 text-emerald-400" />
+                            <span>My Profile & Delivery Form</span>
+                          </div>
+                          {!isProfileComplete(userProfile) && (
+                            <span className="text-[10px] bg-amber-500/30 text-amber-200 px-1.5 py-0.5 rounded font-bold">
+                              Required
+                            </span>
+                          )}
                         </button>
                         <button
                           onClick={() => {
-                            onNavigate('dashboard?tab=orders');
+                            if (!isProfileComplete(userProfile)) {
+                              onNavigate('profile');
+                            } else {
+                              onNavigate('dashboard');
+                            }
+                            setShowUserDropdown(false);
+                          }}
+                          className="w-full text-left px-3 py-2 hover:bg-white/10 rounded-xl flex items-center justify-between text-white/90 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            <User className="h-3.5 w-3.5 text-[#FACC15]" />
+                            <span>My Account Dashboard</span>
+                          </div>
+                          {!isProfileComplete(userProfile) && (
+                            <span className="text-[10px] bg-white/10 text-white/50 px-1.5 py-0.5 rounded font-bold">
+                              Locked
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (!isProfileComplete(userProfile)) {
+                              onNavigate('profile');
+                            } else {
+                              onNavigate('dashboard?tab=orders');
+                            }
                             setShowUserDropdown(false);
                           }}
                           className="w-full text-left px-3 py-2 hover:bg-white/10 rounded-xl flex items-center gap-2 text-white/90 cursor-pointer"
@@ -431,10 +469,26 @@ export default function Navbar({
             <div className="mt-6 flex-1 space-y-3.5 flex flex-col justify-start">
               <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider border-b border-white/10 pb-1">Account & Access</p>
               <button
-                onClick={() => { onNavigate(currentUser ? 'dashboard' : 'auth'); setIsMobileMenuOpen(false); }}
-                className={`w-full text-left text-sm font-bold flex items-center gap-2 ${currentView === 'auth' || currentView === 'dashboard' ? 'text-[#FACC15]' : 'text-white/80'}`}
+                onClick={() => {
+                  if (currentUser) {
+                    if (!isProfileComplete(userProfile)) {
+                      onNavigate('profile');
+                    } else {
+                      onNavigate('dashboard');
+                    }
+                  } else {
+                    onNavigate('auth');
+                  }
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`w-full text-left text-sm font-bold flex items-center justify-between gap-2 ${currentView === 'auth' || currentView === 'dashboard' || currentView === 'profile' ? 'text-[#FACC15]' : 'text-white/80'}`}
               >
                 <span>👤 {currentUser ? `Account (${currentUser.email})` : 'Sign In / Sign Up'}</span>
+                {currentUser && !isProfileComplete(userProfile) && (
+                  <span className="text-[10px] bg-amber-500/30 text-amber-200 px-1.5 py-0.5 rounded font-bold">
+                    Profile Required
+                  </span>
+                )}
               </button>
               {currentUser && (
                 <button

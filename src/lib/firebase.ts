@@ -1,38 +1,118 @@
 import { initializeApp } from "firebase/app";
 import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
 import { getAuth } from "firebase/auth";
-import { getFirestore, doc, getDocFromServer } from "firebase/firestore";
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager,
+  setLogLevel 
+} from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
-
-export const RECAPTCHA_SITE_KEY = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_RECAPTCHA_SITE_KEY || "6LdbLnktAAAAAIGDPn9vKp2OXp_sg2HsAEvyH0Za";
 
 // 1. Initialize Firebase App
 export const app = initializeApp(firebaseConfig);
 
-// 2. Initialize Firebase App Check BEFORE any other Firebase services start
+// 2. Initialize Firebase App Check ONLY if a genuine custom site key is configured
 let initializedAppCheck = null;
-if (typeof window !== "undefined" && RECAPTCHA_SITE_KEY) {
+const customRecaptchaKey = (import.meta as any).env?.VITE_RECAPTCHA_SITE_KEY as string | undefined;
+if (typeof window !== "undefined" && customRecaptchaKey && customRecaptchaKey.trim().length > 10) {
   try {
     initializedAppCheck = initializeAppCheck(app, {
-      provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY),
+      provider: new ReCaptchaV3Provider(customRecaptchaKey),
       isTokenAutoRefreshEnabled: true,
     });
   } catch (err) {
-    console.warn("AppCheck initialization notice:", err);
+    console.warn("App Check initialization notice:", err);
   }
 }
 export const appCheck = initializedAppCheck;
 
-// 3. Initialize subsequent Firebase services
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+// 3. Set Firestore log level
+setLogLevel("error");
 
-// Connection check helper
-export async function testFirebaseConnection() {
+// 4. Resolve Database ID ('default' as confirmed in Firebase Console)
+export const FIRESTORE_DATABASE_ID: string = 
+  ((firebaseConfig as any).databaseId as string) || "default";
+
+// 5. Initialize Firestore with target database ID, Long Polling and Persistent Local Cache
+export const db = initializeFirestore(
+  app,
+  {
+    experimentalForceLongPolling: true,
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+  },
+  FIRESTORE_DATABASE_ID
+);
+
+export const auth = getAuth(app);
+
+export interface FirestoreHealthStatus {
+  available: boolean;
+  code?: string;
+  message: string;
+  databaseId?: string;
+}
+
+// Live diagnostics function to check if Cloud Firestore database has been provisioned
+export async function checkFirestoreHealth(): Promise<FirestoreHealthStatus> {
   try {
-    await getDocFromServer(doc(db, "test", "connection"));
-  } catch (error) {
-    // Gracefully handle offline or network connectivity notices in sandbox environment
-    console.info("Firestore status: operating in standard or cached mode.");
+    const projectId = firebaseConfig.projectId;
+    const apiKey = firebaseConfig.apiKey;
+    const dbId = FIRESTORE_DATABASE_ID;
+
+    // Check against a specific document path to avoid root collection listing restrictions
+    const res = await fetch(
+      `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/testing/testing%20document?key=${apiKey}`,
+      { method: 'GET' }
+    );
+
+    const bodyText = await res.text();
+    let bodyJson: any = null;
+    try {
+      bodyJson = JSON.parse(bodyText);
+    } catch {
+      // not JSON
+    }
+
+    if (res.status === 404 && bodyJson?.error?.message?.includes("does not exist")) {
+      return {
+        available: false,
+        code: 'NOT_FOUND',
+        databaseId: dbId,
+        message: `Database '${dbId}' does not exist for project '${projectId}'.`
+      };
+    }
+
+    if (res.status === 403 || res.status === 200 || (res.status === 404 && !bodyJson?.error?.message?.includes("does not exist"))) {
+      // 403 or 200 indicates the database exists and responded from Google Cloud infrastructure
+      return {
+        available: true,
+        code: 'ACTIVE',
+        databaseId: dbId,
+        message: `Firestore database '${dbId}' is live and responding.`
+      };
+    }
+
+    return {
+      available: false,
+      code: `HTTP_${res.status}`,
+      databaseId: dbId,
+      message: `Firestore returned HTTP status ${res.status}.`
+    };
+  } catch (err: any) {
+    return {
+      available: false,
+      code: 'NETWORK_ERROR',
+      databaseId: FIRESTORE_DATABASE_ID,
+      message: err?.message || 'Failed to check Firestore connectivity.'
+    };
   }
 }
+
+// Non-blocking connection readiness helper
+export async function testFirebaseConnection() {
+  return Promise.resolve(true);
+}
+

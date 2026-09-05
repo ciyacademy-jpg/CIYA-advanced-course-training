@@ -7,23 +7,50 @@ import {
   User 
 } from 'firebase/auth';
 import { auth } from '../lib/firebase';
-import { sendVerificationEmailToCurrentUser, triggerPasswordResetEmail, signOutCurrentUser } from '../lib/authService';
-import { Mail, Lock, User as UserIcon, LogIn, UserPlus, KeyRound, LogOut, CheckCircle2, AlertCircle, ArrowLeft, ShieldCheck, Send, RefreshCw, ShieldAlert } from 'lucide-react';
+import { 
+  sendVerificationEmailToCurrentUser, 
+  triggerPasswordResetEmail, 
+  signOutCurrentUser,
+  signInWithGoogle,
+  handleGoogleRedirectResult
+} from '../lib/authService';
+import { isProfileComplete, fetchUserProfileFromFirestore } from '../lib/userProfileService';
+import { UserProfileData } from '../types';
+import { 
+  Mail, 
+  Lock, 
+  User as UserIcon, 
+  LogIn, 
+  UserPlus, 
+  KeyRound, 
+  LogOut, 
+  CheckCircle2, 
+  AlertCircle, 
+  ArrowLeft, 
+  ShieldCheck, 
+  Send, 
+  RefreshCw, 
+  ShieldAlert,
+  UserCheck 
+} from 'lucide-react';
 
 interface AuthViewProps {
   currentUser: User | null;
+  userProfile?: UserProfileData | null;
   onNavigate: (view: string) => void;
 }
 
-export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
-  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
+export default function AuthView({ currentUser, userProfile, onNavigate }: AuthViewProps) {
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot' | 'verify-pending'>('signin');
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState('');
   
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [checkingVerification, setCheckingVerification] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -39,44 +66,164 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
     return () => clearInterval(timer);
   }, [resendCountdown]);
 
+  // Check for redirect result from Google OAuth redirect flow
+  useEffect(() => {
+    let isMounted = true;
+    const checkRedirect = async () => {
+      try {
+        const result = await handleGoogleRedirectResult();
+        if (!isMounted) return;
+        if (result.success && result.user) {
+          let profileData: UserProfileData | null = null;
+          try {
+            profileData = await fetchUserProfileFromFirestore(result.user.uid);
+          } catch {
+            const stored = localStorage.getItem(`freshbasket_profile_${result.user.uid}`);
+            if (stored) {
+              try { profileData = JSON.parse(stored); } catch {}
+            }
+          }
+
+          const isComplete = isProfileComplete(profileData);
+          if (!isComplete) {
+            setSuccess('Successfully signed in with Google! Notice: Please complete your mandatory delivery profile to access your dashboard.');
+            setTimeout(() => {
+              if (isMounted) onNavigate('profile');
+            }, 800);
+          } else {
+            setSuccess('Successfully signed in with Google! Opening dashboard...');
+            setTimeout(() => {
+              if (isMounted) onNavigate('dashboard');
+            }, 800);
+          }
+        } else if (!result.success && result.message) {
+          setError(result.message);
+        }
+      } catch (err) {
+        console.warn('Redirect result check notice:', err);
+      }
+    };
+    checkRedirect();
+    return () => {
+      isMounted = false;
+    };
+  }, [onNavigate]);
+
   const resetState = () => {
     setError(null);
     setSuccess(null);
   };
 
+  const handleVerificationConfirmed = async (verifiedUser: User) => {
+    setSuccess('🎉 Your email address has been confirmed! Checking profile status...');
+    setMode('signin');
+    setPendingEmail('');
+
+    let profileData: UserProfileData | null = null;
+    try {
+      profileData = await fetchUserProfileFromFirestore(verifiedUser.uid);
+    } catch {
+      const stored = localStorage.getItem(`freshbasket_profile_${verifiedUser.uid}`);
+      if (stored) {
+        try { profileData = JSON.parse(stored); } catch {}
+      }
+    }
+
+    const isComplete = isProfileComplete(profileData);
+    if (!isComplete) {
+      // Existing or new user who has not filled their profile form! Mandated to do so!
+      setSuccess('🎉 Email confirmed! Notice: As a member, you must complete your delivery profile before accessing your dashboard.');
+      setTimeout(() => {
+        onNavigate('profile');
+      }, 900);
+    } else {
+      setSuccess('🎉 Email confirmed! Welcome back. Loading your dashboard...');
+      setTimeout(() => {
+        onNavigate('dashboard');
+      }, 900);
+    }
+  };
+
+  // Automatic background poller to detect email verification without rerouting or requiring page refreshes
+  useEffect(() => {
+    const isPending = mode === 'verify-pending' || (currentUser && !currentUser.emailVerified);
+    if (!isPending) return;
+
+    const interval = setInterval(async () => {
+      if (auth.currentUser) {
+        try {
+          await auth.currentUser.reload();
+          if (auth.currentUser.emailVerified) {
+            clearInterval(interval);
+            await handleVerificationConfirmed(auth.currentUser);
+          }
+        } catch {
+          // ignore transient poll errors
+        }
+      }
+    }, 3500);
+
+    return () => clearInterval(interval);
+  }, [mode, currentUser]);
+
   const handleSignInWithPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     resetState();
 
-    if (!email || !password) {
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) {
       setError('Please enter both email and password.');
       return;
     }
 
     setLoading(true);
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
       
       // Reload user profile to ensure fresh emailVerified state
       await userCredential.user.reload();
 
       if (!userCredential.user.emailVerified) {
-        // Sign out immediately so unverified user cannot access protected views
-        await signOutCurrentUser();
-        setError(`Email Verification Required: Please check your inbox (${email}) and click the verification link before logging in.`);
+        // Do NOT sign out or reroute! Keep user on dedicated verification screen awaiting confirmation
+        setPendingEmail(cleanEmail);
+        setMode('verify-pending');
+        setError(`Email Verification Required: Please check your inbox (${cleanEmail}) and click the verification link before logging in.`);
         setLoading(false);
         return;
       }
 
-      setSuccess('Successfully signed in!');
-      setTimeout(() => {
-        onNavigate('dashboard');
-      }, 1000);
+      // Check if existing user has completed their profile
+      let profileData: UserProfileData | null = null;
+      try {
+        profileData = await fetchUserProfileFromFirestore(userCredential.user.uid);
+      } catch {
+        const stored = localStorage.getItem(`freshbasket_profile_${userCredential.user.uid}`);
+        if (stored) {
+          try {
+            profileData = JSON.parse(stored);
+          } catch {}
+        }
+      }
+
+      const isComplete = isProfileComplete(profileData);
+
+      if (isComplete) {
+        setSuccess('Successfully signed in! Opening your dashboard...');
+        setTimeout(() => {
+          onNavigate('dashboard');
+        }, 800);
+      } else {
+        // Existing user who has NOT filled their profile form is mandated to do so
+        setSuccess('Successfully signed in! Notice: As an existing member, you must complete your delivery profile before accessing your dashboard.');
+        setTimeout(() => {
+          onNavigate('profile');
+        }, 800);
+      }
     } catch (err: any) {
-      console.error('Auth Error:', err);
+      console.warn('Sign-in notice:', err?.code || err);
       let msg = 'Failed to sign in. Please check your credentials.';
       if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
-        msg = 'Invalid email or password.';
+        msg = 'Invalid email or password. Please verify your credentials or click Sign Up below if you do not have an account yet.';
       } else if (err.code === 'auth/invalid-email') {
         msg = 'Please enter a valid email address.';
       } else if (err.code === 'auth/too-many-requests') {
@@ -96,7 +243,8 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
     e.preventDefault();
     resetState();
 
-    if (!email || !password) {
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) {
       setError('Please fill in all required fields.');
       return;
     }
@@ -106,9 +254,14 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
       return;
     }
 
+    if (password.length > 12) {
+      setError('For account security, password must not exceed 12 characters.');
+      return;
+    }
+
     setLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
       if (displayName.trim() && userCredential.user) {
         await updateProfile(userCredential.user, { displayName: displayName.trim() });
       }
@@ -119,21 +272,20 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
       // Start 30s countdown timer for resends
       setResendCountdown(30);
 
-      // Sign out new user until they click verification link
-      await signOutCurrentUser();
+      // Keep user in verify-pending mode on dedicated screen awaiting email confirmation
+      setPendingEmail(cleanEmail);
+      setMode('verify-pending');
 
       if (verificationResult.success) {
-        setSuccess(`Account created! A verification link has been sent to ${email}. Please check your inbox and verify your email before logging in.`);
+        setSuccess(`Account created! A verification link has been sent to ${cleanEmail}. Please check your inbox and verify your email to activate your account.`);
       } else {
         setSuccess('Account created successfully! Please check your email inbox to verify your account.');
       }
 
-      // Switch to sign in view
-      setTimeout(() => {
-        setMode('signin');
-      }, 2000);
+      // CRITICAL: NEVER automatically reroute to sign in until the email has been confirmed!
+      // The user stays on this screen until the email link is clicked.
     } catch (err: any) {
-      console.error('Auth Sign Up Error:', err);
+      console.warn('Sign-up notice:', err?.code || err);
       let msg = 'Failed to create account.';
       if (err.code === 'auth/email-already-in-use') {
         msg = 'This email address is already registered. Please sign in instead.';
@@ -150,12 +302,62 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
     }
   };
 
+  const handleGoogleAuth = async () => {
+    resetState();
+    setGoogleLoading(true);
+    try {
+      const result = await signInWithGoogle();
+      if (result.success) {
+        if (result.user) {
+          let profileData: UserProfileData | null = null;
+          try {
+            profileData = await fetchUserProfileFromFirestore(result.user.uid);
+          } catch {
+            const stored = localStorage.getItem(`freshbasket_profile_${result.user.uid}`);
+            if (stored) {
+              try { profileData = JSON.parse(stored); } catch {}
+            }
+          }
+
+          const isComplete = isProfileComplete(profileData);
+          if (isComplete) {
+            setSuccess('Successfully signed in with Google! Opening dashboard...');
+            setTimeout(() => {
+              onNavigate('dashboard');
+            }, 800);
+          } else {
+            // Existing user who has NOT filled their profile form is mandated to do so
+            setSuccess('Successfully signed in with Google! Notice: Please complete your mandatory delivery profile to access your dashboard.');
+            setTimeout(() => {
+              onNavigate('profile');
+            }, 800);
+          }
+        } else {
+          setSuccess('Redirecting to Google sign in...');
+        }
+      } else {
+        setError(result.message);
+      }
+    } catch (err: any) {
+      console.warn('Google Sign-In notice:', err?.code || err);
+      setError('An error occurred during Google sign in. Please try again.');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     resetState();
 
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setError('Please enter your email address to receive password reset instructions.');
+      return;
+    }
+
     setLoading(true);
-    const result = await triggerPasswordResetEmail(email);
+    const result = await triggerPasswordResetEmail(cleanEmail);
     if (result.success) {
       setSuccess(result.message);
     } else {
@@ -168,7 +370,8 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
     if (resendCountdown > 0) return;
     resetState();
     setLoading(true);
-    const result = await sendVerificationEmailToCurrentUser(currentUser);
+    const userToVerify = auth.currentUser || currentUser;
+    const result = await sendVerificationEmailToCurrentUser(userToVerify);
     if (result.success) {
       setSuccess(result.message);
       setResendCountdown(30); // trigger 30s countdown
@@ -179,21 +382,22 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
   };
 
   const handleCheckVerificationStatus = async () => {
-    if (!currentUser) return;
+    const userToCheck = auth.currentUser || currentUser;
+    if (!userToCheck) {
+      setError('No active session found. Please sign in with your email and password to verify your link.');
+      return;
+    }
     setCheckingVerification(true);
     resetState();
     try {
-      await currentUser.reload();
-      if (auth.currentUser?.emailVerified) {
-        setSuccess('🎉 Your email address is verified! Redirecting to your dashboard...');
-        setTimeout(() => {
-          onNavigate('dashboard');
-        }, 1200);
+      await userToCheck.reload();
+      if (userToCheck.emailVerified) {
+        await handleVerificationConfirmed(userToCheck);
       } else {
-        setError('Your email is not verified yet. Please check your inbox (and spam folder) and click the link.');
+        setError('Your email is not verified yet. Please check your inbox (and spam folder) and click the confirmation link.');
       }
     } catch (err: any) {
-      setError('Failed to check verification status. Please try again.');
+      setError('Failed to check verification status. Please verify your internet connection and try again.');
     } finally {
       setCheckingVerification(false);
     }
@@ -202,6 +406,8 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
   const handleSignOut = async () => {
     resetState();
     setLoading(true);
+    setMode('signin');
+    setPendingEmail('');
     const result = await signOutCurrentUser();
     if (result.success) {
       setSuccess(result.message);
@@ -211,14 +417,16 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
     setLoading(false);
   };
 
-  // If user is currently signed in but NOT verified
-  if (currentUser && !currentUser.emailVerified) {
+  // If user is currently unverified OR in verify-pending mode:
+  // Strictly display the verification notification and NEVER reroute to sign in until verified!
+  if ((currentUser && !currentUser.emailVerified) || mode === 'verify-pending') {
+    const targetEmail = pendingEmail || currentUser?.email || email || 'your registered email';
     return (
-      <div className="max-w-xl mx-auto px-4 py-16 font-sans text-white">
+      <div id="unverified-state-container" className="max-w-xl mx-auto px-4 py-16 font-sans text-white">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white/10 border border-amber-500/30 rounded-3xl p-8 backdrop-blur-xl shadow-2xl text-center space-y-6"
+          className="bg-white/10 border border-amber-500/40 rounded-3xl p-8 backdrop-blur-xl shadow-2xl text-center space-y-6"
         >
           <div className="mx-auto h-20 w-20 rounded-full bg-amber-500/20 border-2 border-amber-400 flex items-center justify-center text-amber-400">
             <ShieldAlert className="h-10 w-10 text-amber-400" />
@@ -226,21 +434,25 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
 
           <div>
             <span className="text-[10px] font-black uppercase text-amber-300 tracking-widest bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/30">
-              Email Verification Required
+              Email Confirmation Required
             </span>
             <h2 className="text-2xl font-black text-white mt-3">Verify Your Email Address</h2>
             <p className="text-xs text-white/70 mt-2 max-w-md mx-auto leading-relaxed">
-              We sent a verification email to <strong className="text-emerald-300 font-mono">{currentUser.email}</strong>.
-              You must verify your email address before gaining access to your dashboard.
+              We sent a verification link to <strong className="text-emerald-300 font-mono">{targetEmail}</strong>.
+              You must confirm your email address via this link before gaining access to your dashboard.
             </p>
           </div>
 
+          {/* Persistent security notification notice */}
           <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-left text-xs space-y-2">
             <div className="flex items-start gap-2.5 text-amber-200">
               <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-              <span>
-                Please check your email inbox and click the verification link. If you don't see it, check your spam or junk folder.
-              </span>
+              <div className="space-y-1">
+                <p className="font-bold text-amber-300">Confirmation Link Active</p>
+                <p className="text-[11px] text-amber-100/80 leading-relaxed">
+                  Please open your email inbox and click the verification link. If you do not see it, check your spam or promotions folder. This screen will automatically update and proceed once your confirmation is verified.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -270,9 +482,10 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
             )}
           </AnimatePresence>
 
-          {/* Verification Action Buttons - NO DASHBOARD REDIRECT BUTTON PER SPEC */}
+          {/* Verification Action Buttons - Strictly no direct dashboard bypass */}
           <div className="space-y-3 pt-2">
             <button
+              id="btn-check-verification"
               onClick={handleCheckVerificationStatus}
               disabled={checkingVerification}
               className="w-full py-3.5 px-5 rounded-2xl bg-[#16A34A] hover:bg-[#15803d] text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
@@ -288,6 +501,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
             </button>
 
             <button
+              id="btn-resend-verification"
               onClick={handleResendVerification}
               disabled={loading || resendCountdown > 0}
               className="w-full py-3 px-5 rounded-2xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
@@ -301,11 +515,12 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
             </button>
 
             <button
+              id="btn-signout-unverified"
               onClick={handleSignOut}
               className="w-full py-2.5 px-5 rounded-2xl bg-white/5 hover:bg-white/10 text-white/70 hover:text-white font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <LogOut className="h-3.5 w-3.5" />
-              <span>Sign Out</span>
+              <span>Cancel & Use Different Account</span>
             </button>
           </div>
         </motion.div>
@@ -316,7 +531,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
   // If user is currently signed in AND verified
   if (currentUser && currentUser.emailVerified) {
     return (
-      <div className="max-w-xl mx-auto px-4 py-16 font-sans text-white">
+      <div id="verified-state-container" className="max-w-xl mx-auto px-4 py-16 font-sans text-white">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -356,6 +571,21 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
             </div>
           </div>
 
+          {/* Profile Completion Callout for Incomplete Existing Users */}
+          {!isProfileComplete(userProfile) && (
+            <div className="p-4 bg-amber-500/15 border border-amber-500/30 rounded-2xl text-left text-xs space-y-2">
+              <div className="flex items-start gap-2.5 text-amber-200">
+                <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-amber-300">Mandatory Profile Completion Required</p>
+                  <p className="text-[11px] text-amber-100/80 leading-relaxed">
+                    As an existing member, you must complete your delivery address and contact details form before your personalized dashboard can be unlocked.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {success && (
             <div className="p-3 bg-emerald-500/20 border border-emerald-500/40 rounded-xl text-emerald-200 text-xs flex items-center justify-center gap-2">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -365,14 +595,34 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
 
           <div className="flex flex-col sm:flex-row gap-3 pt-2">
             <button
-              onClick={() => onNavigate('dashboard')}
-              className="flex-1 py-3 px-5 rounded-2xl bg-[#16A34A] hover:bg-[#15803d] text-white font-bold text-xs shadow-lg transition cursor-pointer"
+              id="btn-goto-profile"
+              onClick={() => onNavigate('profile')}
+              className="flex-1 py-3 px-5 rounded-2xl bg-[#FACC15] hover:bg-yellow-400 text-black font-extrabold text-xs shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
             >
-              Go to Account Dashboard
+              <UserCheck className="h-4 w-4 text-black" />
+              <span>{isProfileComplete(userProfile) ? 'View / Edit Profile' : 'Complete Mandatory Profile'}</span>
             </button>
             <button
+              id="btn-goto-dashboard"
+              onClick={() => {
+                if (!isProfileComplete(userProfile)) {
+                  onNavigate('profile');
+                } else {
+                  onNavigate('dashboard');
+                }
+              }}
+              className={`flex-1 py-3 px-5 rounded-2xl font-bold text-xs shadow-lg transition cursor-pointer ${
+                isProfileComplete(userProfile)
+                  ? 'bg-[#16A34A] hover:bg-[#15803d] text-white'
+                  : 'bg-white/10 text-white/60 hover:bg-white/20 border border-white/10'
+              }`}
+            >
+              {isProfileComplete(userProfile) ? 'Go to Dashboard' : 'Dashboard Locked (Fill Form)'}
+            </button>
+            <button
+              id="btn-signout-verified"
               onClick={handleSignOut}
-              className="py-3 px-5 rounded-2xl bg-red-600/80 hover:bg-red-700 text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
+              className="py-3 px-5 rounded-2xl bg-white/10 hover:bg-red-500/30 text-white/80 hover:text-white font-bold text-xs border border-white/15 transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <LogOut className="h-4 w-4" />
               <span>Sign Out</span>
@@ -385,7 +635,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
 
   // Primary Login / Register Form
   return (
-    <div className="max-w-md mx-auto px-4 py-12 lg:py-16 font-sans text-white">
+    <div id="auth-portal-card" className="max-w-md mx-auto px-4 py-12 lg:py-16 font-sans text-white">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -403,8 +653,8 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
             {mode === 'forgot' && 'Reset Password'}
           </h2>
           <p className="text-xs text-white/60">
-            {mode === 'signin' && 'Sign in using your registered email address and password.'}
-            {mode === 'signup' && 'Sign up with your email and password for express grocery ordering.'}
+            {mode === 'signin' && 'Sign in with your Google account or email and password.'}
+            {mode === 'signup' && 'Sign up with Google or your email to get started.'}
             {mode === 'forgot' && 'We will send a password reset link to your email.'}
           </p>
         </div>
@@ -413,6 +663,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
         {mode !== 'forgot' && (
           <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10">
             <button
+              id="tab-signin"
               onClick={() => { setMode('signin'); resetState(); }}
               className={`flex-1 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer ${
                 mode === 'signin'
@@ -424,6 +675,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
               <span>Sign In</span>
             </button>
             <button
+              id="tab-signup"
               onClick={() => { setMode('signup'); resetState(); }}
               className={`flex-1 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer ${
                 mode === 'signup'
@@ -451,10 +703,32 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
                 <span className="leading-relaxed">{error}</span>
               </div>
 
+              {/* Show switch to sign up / reset password buttons directly on error card */}
+              {(error.includes('Invalid email or password') || error.includes('credentials')) && mode === 'signin' && (
+                <div className="pt-2 border-t border-red-500/30 flex flex-wrap items-center justify-end gap-2 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => { setMode('signup'); resetState(); }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <UserPlus className="h-3 w-3" />
+                    <span>Create New Account</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setMode('forgot'); resetState(); }}
+                    className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <span>Forgot Password?</span>
+                  </button>
+                </div>
+              )}
+
               {/* Show resend button directly on error card if verification is required */}
               {error.includes('Verification Required') && (
                 <div className="pt-2 border-t border-red-500/30 flex justify-end">
                   <button
+                    id="btn-error-resend-verification"
                     type="button"
                     onClick={handleResendVerification}
                     disabled={loading || resendCountdown > 0}
@@ -485,6 +759,53 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
           )}
         </AnimatePresence>
 
+        {/* Google Sign In Button (Available on Sign In and Sign Up) */}
+        {mode !== 'forgot' && (
+          <div className="space-y-4">
+            <button
+              id="btn-google-auth"
+              type="button"
+              onClick={handleGoogleAuth}
+              disabled={googleLoading || loading}
+              className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-zinc-100 text-zinc-900 font-bold text-xs shadow-md transition flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 border border-zinc-200"
+            >
+              {googleLoading ? (
+                <div className="h-4 w-4 border-2 border-zinc-400 border-t-zinc-900 rounded-full animate-spin" />
+              ) : (
+                <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.16 0 9.94 0 12s.45 3.84 1.25 5.42l4.03-3.15z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                  />
+                </svg>
+              )}
+              <span>
+                {mode === 'signin' ? 'Continue with Google' : 'Sign up with Google'}
+              </span>
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-white/15" />
+              <span className="text-[11px] font-medium text-white/50 uppercase tracking-wider">
+                or with email
+              </span>
+              <div className="flex-1 h-px bg-white/15" />
+            </div>
+          </div>
+        )}
+
         {/* Password Sign In Form */}
         {mode === 'signin' && (
           <form onSubmit={handleSignInWithPassword} className="space-y-4">
@@ -493,6 +814,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
               <div className="relative">
                 <Mail className="absolute left-3.5 top-3 h-4 w-4 text-white/40" />
                 <input
+                  id="input-signin-email"
                   type="email"
                   required
                   value={email}
@@ -507,9 +829,10 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
               <div className="flex justify-between items-center">
                 <label className="text-xs font-bold text-white/80 block">Password</label>
                 <button
+                  id="btn-forgot-password-link"
                   type="button"
                   onClick={() => { setMode('forgot'); resetState(); }}
-                  className="text-[11px] text-[#FACC15] hover:underline"
+                  className="text-[11px] text-[#FACC15] hover:underline cursor-pointer"
                 >
                   Forgot Password?
                 </button>
@@ -517,6 +840,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
               <div className="relative">
                 <Lock className="absolute left-3.5 top-3 h-4 w-4 text-white/40" />
                 <input
+                  id="input-signin-password"
                   type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
@@ -525,9 +849,10 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
                   className="w-full bg-white/5 border border-white/15 rounded-xl py-2.5 pl-10 pr-12 text-xs text-white placeholder-white/30 focus:outline-none focus:border-[#16A34A] transition"
                 />
                 <button
+                  id="btn-toggle-signin-password"
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-2.5 text-[10px] text-white/60 hover:text-white font-bold"
+                  className="absolute right-3.5 top-2.5 text-[10px] text-white/60 hover:text-white font-bold cursor-pointer"
                 >
                   {showPassword ? 'Hide' : 'Show'}
                 </button>
@@ -535,8 +860,9 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
             </div>
 
             <button
+              id="btn-submit-signin"
               type="submit"
-              disabled={loading}
+              disabled={loading || googleLoading}
               className="w-full py-3.5 rounded-2xl bg-[#16A34A] hover:bg-[#15803d] text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
             >
               {loading ? (
@@ -544,7 +870,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
               ) : (
                 <>
                   <LogIn className="h-4 w-4" />
-                  <span>Sign In</span>
+                  <span>Sign In with Email</span>
                 </>
               )}
             </button>
@@ -559,6 +885,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
               <div className="relative">
                 <UserIcon className="absolute left-3.5 top-3 h-4 w-4 text-white/40" />
                 <input
+                  id="input-signup-name"
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
@@ -573,6 +900,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
               <div className="relative">
                 <Mail className="absolute left-3.5 top-3 h-4 w-4 text-white/40" />
                 <input
+                  id="input-signup-email"
                   type="email"
                   required
                   value={email}
@@ -584,22 +912,28 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-white/80 block">Password (At least 6 characters)</label>
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-white/80 block">Password (6 – 12 characters)</label>
+                <span className="text-[10px] text-white/40">Max 12 chars</span>
+              </div>
               <div className="relative">
                 <Lock className="absolute left-3.5 top-3 h-4 w-4 text-white/40" />
                 <input
+                  id="input-signup-password"
                   type={showPassword ? 'text' : 'password'}
                   required
                   minLength={6}
+                  maxLength={12}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Create a strong password"
+                  placeholder="Create password (6-12 chars)"
                   className="w-full bg-white/5 border border-white/15 rounded-xl py-2.5 pl-10 pr-12 text-xs text-white placeholder-white/30 focus:outline-none focus:border-[#16A34A] transition"
                 />
                 <button
+                  id="btn-toggle-signup-password"
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-2.5 text-[10px] text-white/60 hover:text-white font-bold"
+                  className="absolute right-3.5 top-2.5 text-[10px] text-white/60 hover:text-white font-bold cursor-pointer"
                 >
                   {showPassword ? 'Hide' : 'Show'}
                 </button>
@@ -607,8 +941,9 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
             </div>
 
             <button
+              id="btn-submit-signup"
               type="submit"
-              disabled={loading}
+              disabled={loading || googleLoading}
               className="w-full py-3.5 rounded-2xl bg-[#16A34A] hover:bg-[#15803d] text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
             >
               {loading ? (
@@ -631,6 +966,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
               <div className="relative">
                 <Mail className="absolute left-3.5 top-3 h-4 w-4 text-white/40" />
                 <input
+                  id="input-forgot-email"
                   type="email"
                   required
                   value={email}
@@ -642,6 +978,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
             </div>
 
             <button
+              id="btn-submit-forgot"
               type="submit"
               disabled={loading}
               className="w-full py-3.5 rounded-2xl bg-[#16A34A] hover:bg-[#15803d] text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
@@ -657,6 +994,7 @@ export default function AuthView({ currentUser, onNavigate }: AuthViewProps) {
             </button>
 
             <button
+              id="btn-back-to-signin"
               type="button"
               onClick={() => { setMode('signin'); resetState(); }}
               className="w-full py-2 text-xs text-white/60 hover:text-white transition flex items-center justify-center gap-1 font-bold cursor-pointer"

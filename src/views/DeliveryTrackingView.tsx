@@ -8,18 +8,18 @@ interface DeliveryTrackingViewProps {
   onNavigate: (view: string) => void;
 }
 
-const stepsList = [
-  { id: 'Received', label: 'Order Received', desc: 'Secure payment confirmed. Receipt sent to customer email.' },
-  { id: 'Confirmed', label: 'Payment Confirmed', desc: 'Dispatched to farm picker schedules.' },
-  { id: 'Picking', label: 'Picking Items', desc: 'Hand-sorting ripe tomatoes and fresh produce.' },
-  { id: 'Inspection', label: 'Quality Inspection', desc: 'Testing for freshness, weights, and pests.' },
-  { id: 'Packed', label: 'Packed & Insulated', desc: 'Loaded into standard cardboard boxes with thermal cooling sheets.' },
-  { id: 'OutForDelivery', label: 'Out For Delivery', desc: 'Courier dispatched from Lekki Phase 1 sector.' },
-  { id: 'Nearby', label: 'Rider Nearby', desc: 'Courier has reached Admiralty Way gates.' },
-  { id: 'Delivered', label: 'Delivered', desc: 'OTP verification successful. Handed over.' }
-];
-
 export default function DeliveryTrackingView({ activeOrder, onNavigate }: DeliveryTrackingViewProps) {
+  const stepsList = [
+    { id: 'Received', label: 'Order Received', desc: 'Secure payment confirmed. Receipt sent to customer email.' },
+    { id: 'Confirmed', label: 'Payment Confirmed', desc: 'Dispatched to farm picker schedules.' },
+    { id: 'Picking', label: 'Picking Items', desc: 'Hand-sorting ripe produce and farm items.' },
+    { id: 'Inspection', label: 'Quality Inspection', desc: 'Testing for freshness, weights, and seal integrity.' },
+    { id: 'Packed', label: 'Packed & Insulated', desc: 'Loaded into standard cartons with thermal cooling insulation.' },
+    { id: 'OutForDelivery', label: 'Out For Delivery', desc: `Courier dispatched towards ${activeOrder?.deliveryAddress?.city || 'destination'}.` },
+    { id: 'Nearby', label: 'Rider Nearby', desc: `Courier is approaching ${activeOrder?.deliveryAddress?.street || 'your delivery address'}.` },
+    { id: 'Delivered', label: 'Delivered', desc: 'OTP verification confirmed. Order successfully received.' }
+  ];
+
   // Use local state so the user can interactively trigger / simulate order status steps
   const [currentStepIndex, setCurrentStepIndex] = useState(2); // Starts at 'Picking' for realism
 
@@ -170,7 +170,7 @@ export default function DeliveryTrackingView({ activeOrder, onNavigate }: Delive
               {activeOrder.otp || "5492"}
             </span>
             <p className="text-[11px] text-white/70 leading-relaxed font-semibold">
-              Provide this security code to our courier <b>Tunde Alao</b> when he arrives at Admiralty Way. This verifies successful delivery.
+              Provide this security code to our courier <b>{activeOrder.riderName || "your courier"}</b> upon arrival at {activeOrder.deliveryAddress?.street || "your delivery address"}. This verifies successful delivery.
             </p>
           </div>
 

@@ -25,10 +25,17 @@ import MealPlannerView from './views/MealPlannerView';
 import BlogView from './views/BlogView';
 import StaticViews from './views/StaticViews';
 import AuthView from './views/AuthView';
+import ProfileView from './views/ProfileView';
 
-import { Product, CartItem, Order, LoyaltyReward } from './types';
+import { Product, CartItem, Order, LoyaltyReward, UserProfileData } from './types';
 import { testFirebaseConnection, auth } from './lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
+import { 
+  saveUserProfileToFirestore, 
+  fetchUserProfileFromFirestore, 
+  subscribeToUserProfile,
+  isProfileComplete
+} from './lib/userProfileService';
 
 // Loyalty Rewards database
 const initialRewards: LoyaltyReward[] = [
@@ -50,11 +57,167 @@ export default function App() {
   const [searchFilter, setSearchFilter] = useState("");
   const [dashboardActiveTab, setDashboardActiveTab] = useState("overview");
 
-  // State for interactive loyalty shop
-  const [rewardsPoints, setRewardsPoints] = useState(1420);
+  // State for interactive loyalty shop - dynamic & persistent per user
+  const [currentUser, setCurrentUser] = useState<User | null>(() => auth.currentUser);
+  const [rewardsPoints, setRewardsPoints] = useState<number>(() => {
+    try {
+      const userKey = auth.currentUser ? auth.currentUser.uid : 'guest';
+      const stored = localStorage.getItem(`freshbasket_rewards_pts_${userKey}`);
+      if (stored !== null) {
+        const parsed = parseInt(stored, 10);
+        if (!isNaN(parsed)) return parsed;
+      }
+      return auth.currentUser ? 150 : 0;
+    } catch {
+      return 0;
+    }
+  });
   const [vouchersClaimed, setVouchersClaimed] = useState<string[]>([]);
 
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  // User Profile State (Strictly unique per user, never unkeyed or shared across sessions)
+  const [userProfile, setUserProfile] = useState<UserProfileData | null>(() => {
+    try {
+      localStorage.removeItem('freshbasket_current_user_profile');
+      if (auth.currentUser) {
+        const saved = localStorage.getItem(`freshbasket_profile_${auth.currentUser.uid}`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.userId === auth.currentUser.uid) {
+            return parsed;
+          }
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Sync profile when currentUser changes (load profile unique to this user from local storage and backend Firestore)
+  useEffect(() => {
+    // Clean up any legacy unkeyed profile
+    try {
+      localStorage.removeItem('freshbasket_current_user_profile');
+    } catch {}
+
+    if (currentUser) {
+      const userKey = `freshbasket_profile_${currentUser.uid}`;
+      try {
+        const saved = localStorage.getItem(userKey);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.userId === currentUser.uid) {
+            setUserProfile(parsed);
+          } else {
+            setUserProfile(null);
+          }
+        } else {
+          setUserProfile(null);
+        }
+      } catch {
+        setUserProfile(null);
+      }
+
+      // Fetch from Firestore backend
+      let isSubscribed = true;
+      fetchUserProfileFromFirestore(currentUser.uid).then((cloudProfile) => {
+        if (!isSubscribed) return;
+        if (cloudProfile && cloudProfile.userId === currentUser.uid) {
+          setUserProfile({ ...cloudProfile, backendSynced: true });
+          try {
+            localStorage.setItem(userKey, JSON.stringify(cloudProfile));
+          } catch {
+            // ignore
+          }
+        }
+      });
+
+      // Real-time subscription to cloud changes
+      const unsubscribe = subscribeToUserProfile(currentUser.uid, (remoteProfile) => {
+        if (!isSubscribed) return;
+        if (remoteProfile && remoteProfile.userId === currentUser.uid) {
+          setUserProfile({ ...remoteProfile, backendSynced: true });
+        }
+      });
+
+      // Sync user rewards points
+      const rewardsKey = currentUser.uid;
+      try {
+        const stored = localStorage.getItem(`freshbasket_rewards_pts_${rewardsKey}`);
+        if (stored !== null) {
+          const parsed = parseInt(stored, 10);
+          if (!isNaN(parsed)) {
+            setRewardsPoints(parsed);
+          }
+        } else {
+          // New member bonus of 150 points
+          setRewardsPoints(150);
+          localStorage.setItem(`freshbasket_rewards_pts_${rewardsKey}`, '150');
+        }
+      } catch {
+        // ignore
+      }
+
+      return () => {
+        isSubscribed = false;
+        unsubscribe();
+      };
+    } else {
+      // When signed out or no user: user profile, orders, and points are strictly reset!
+      setUserProfile(null);
+      setRewardsPoints(0);
+      setOrders([]);
+    }
+  }, [currentUser]);
+
+  const handleSaveProfile = async (newProfile: UserProfileData) => {
+    const targetUid = currentUser?.uid || newProfile.userId;
+    if (!targetUid) return { success: false, backendSaved: false };
+    const profileWithUid = { ...newProfile, userId: targetUid };
+    setUserProfile(profileWithUid);
+
+    // Save profile locally strictly scoped to this specific user
+    try {
+      localStorage.setItem(`freshbasket_profile_${targetUid}`, JSON.stringify(profileWithUid));
+      localStorage.removeItem('freshbasket_current_user_profile');
+
+      // Award one-time profile completion bonus points (100 pts)
+      const bonusKey = `freshbasket_profile_bonus_${targetUid}`;
+      if (!localStorage.getItem(bonusKey)) {
+        localStorage.setItem(bonusKey, 'true');
+        setRewardsPoints((prev) => {
+          const updated = prev + 100;
+          localStorage.setItem(`freshbasket_rewards_pts_${targetUid}`, updated.toString());
+          return updated;
+        });
+      }
+    } catch {
+      // ignore
+    }
+
+    // Persist to Firestore backend
+    try {
+      const syncRes = await saveUserProfileToFirestore(newProfile);
+      if (syncRes && syncRes.backendSaved) {
+        setUserProfile((prev) => prev ? { ...prev, backendSynced: true } : prev);
+      }
+      return syncRes;
+    } catch (e) {
+      console.warn('Backend sync notice:', e);
+      return { success: true, backendSaved: false };
+    }
+  };
+
+  const handleRefreshProfile = async (): Promise<boolean> => {
+    const uid = currentUser?.uid || userProfile?.userId;
+    if (!uid) return false;
+    const cloudProfile = await fetchUserProfileFromFirestore(uid);
+    if (cloudProfile) {
+      setUserProfile({ ...cloudProfile, backendSynced: true });
+      return true;
+    }
+    return false;
+  };
 
   // Listen to Firebase Auth state changes
   useEffect(() => {
@@ -63,43 +226,36 @@ export default function App() {
       setCurrentUser(user);
     });
 
-    const defaultOrder: Order = {
-      id: "FB-84210",
-      items: [
-        { product: products[0], quantity: 1, selectedSize: "10kg Bag" }
-      ],
-      subtotal: 38500,
-      deliveryFee: 0,
-      tax: 0,
-      discount: 0,
-      total: 38500,
-      date: "Jul 12, 2026",
-      status: "Delivered",
-      deliveryAddress: {
-        fullName: "Yinka Olamide",
-        street: "24 Admiralty Way",
-        city: "Lekki Phase 1",
-        state: "Lagos State",
-        phone: "+234 812 456 7812"
-      },
-      riderName: "Tunde Alao",
-      riderPhone: "+234 803 111 2222",
-      otp: "9820",
-      estimatedArrival: "Delivered Successfully"
-    };
-    setOrders([defaultOrder]);
-
     return () => unsubscribe();
   }, []);
 
-  // Strict Route Guard: Unverified users cannot access the dashboard
+  // Load and synchronize orders dynamically for the active user
+  useEffect(() => {
+    const userKey = currentUser ? currentUser.uid : 'guest';
+    const savedOrdersRaw = localStorage.getItem(`freshbasket_orders_${userKey}`);
+    if (savedOrdersRaw) {
+      try {
+        setOrders(JSON.parse(savedOrdersRaw));
+      } catch {
+        setOrders([]);
+      }
+    } else {
+      setOrders([]);
+    }
+  }, [currentUser]);
+
+  // Strict Route Guard:
+  // 1. Unauthenticated or unverified users cannot access the dashboard -> redirected to 'auth'
+  // 2. Authenticated users MUST complete their member profile form before gaining access to their dashboard -> redirected to 'profile'
   useEffect(() => {
     if (activeView === 'dashboard') {
       if (!currentUser || !currentUser.emailVerified) {
         setActiveView('auth');
+      } else if (!isProfileComplete(userProfile)) {
+        setActiveView('profile');
       }
     }
-  }, [activeView, currentUser]);
+  }, [activeView, currentUser, userProfile]);
 
   // Global Cart Event Actions
   const handleAddToCart = (product: Product, qty: number) => {
@@ -141,11 +297,30 @@ export default function App() {
   };
 
   const handleAddOrder = (order: Order) => {
-    setOrders(prev => [order, ...prev]);
+    setOrders(prev => {
+      const updated = [order, ...prev];
+      const userKey = currentUser ? currentUser.uid : 'guest';
+      try {
+        localStorage.setItem(`freshbasket_orders_${userKey}`, JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Could not save orders locally:', e);
+      }
+      return updated;
+    });
     setActiveOrder(order);
     
-    // Add bonus rewards points
-    setRewardsPoints(prev => prev + 250);
+    // Earn real points based on order total: 1 point for every ₦100 spent (minimum 50 pts)
+    const pointsEarned = Math.max(50, Math.floor(order.total / 100));
+    setRewardsPoints(prev => {
+      const updated = prev + pointsEarned;
+      try {
+        const userKey = currentUser ? currentUser.uid : 'guest';
+        localStorage.setItem(`freshbasket_rewards_pts_${userKey}`, updated.toString());
+      } catch {
+        // ignore
+      }
+      return updated;
+    });
   };
 
   const handleClearCart = () => {
@@ -154,24 +329,35 @@ export default function App() {
 
   // Advanced router
   const handleNavigate = (path: string) => {
+    let targetView = path;
+    let queryParams: URLSearchParams | null = null;
+
     if (path.includes('?')) {
       const [view, queryStr] = path.split('?');
-      setActiveView(view);
+      targetView = view;
+      queryParams = new URLSearchParams(queryStr);
+    }
+
+    // Strict profile completion mandate: existing or new users cannot access dashboard until profile is complete
+    if (targetView === 'dashboard') {
+      if (!currentUser || !currentUser.emailVerified) {
+        targetView = 'auth';
+      } else if (!isProfileComplete(userProfile)) {
+        targetView = 'profile';
+      }
+    }
+
+    setActiveView(targetView);
+
+    if (queryParams) {
+      const cat = queryParams.get('category');
+      const search = queryParams.get('search');
+      const tab = queryParams.get('tab');
       
-      const params = new URLSearchParams(queryStr);
-      const cat = params.get('category');
-      const search = params.get('search');
-      const tab = params.get('tab');
-      
-      if (cat) setSelectedCategoryFilter(cat);
-      else setSelectedCategoryFilter("");
-      
-      if (search) setSearchFilter(search);
-      else setSearchFilter("");
-      
+      setSelectedCategoryFilter(cat || "");
+      setSearchFilter(search || "");
       if (tab) setDashboardActiveTab(tab);
     } else {
-      setActiveView(path);
       setSelectedCategoryFilter("");
       setSearchFilter("");
       setDashboardActiveTab("overview");
@@ -192,7 +378,16 @@ export default function App() {
       return;
     }
 
-    setRewardsPoints(prev => prev - reward.pointsCost);
+    setRewardsPoints(prev => {
+      const updated = Math.max(0, prev - reward.pointsCost);
+      try {
+        const userKey = currentUser ? currentUser.uid : 'guest';
+        localStorage.setItem(`freshbasket_rewards_pts_${userKey}`, updated.toString());
+      } catch {
+        // ignore
+      }
+      return updated;
+    });
     setVouchersClaimed(prev => [...prev, reward.code]);
     alert(`🎉 Successfully redeemed! Use Code: ${reward.code} at checkout to claim your reward.`);
   };
@@ -210,6 +405,7 @@ export default function App() {
         onQuickView={handleQuickView}
         onAddToCart={handleAddToCart}
         currentUser={currentUser}
+        userProfile={userProfile}
       />
 
       {/* Main Routed Canvas Sections */}
@@ -219,6 +415,7 @@ export default function App() {
         {activeView === 'auth' && (
           <AuthView
             currentUser={currentUser}
+            userProfile={userProfile}
             onNavigate={handleNavigate}
           />
         )}
@@ -273,6 +470,17 @@ export default function App() {
             onClearCart={handleClearCart}
             onNavigate={handleNavigate}
             onAddOrder={handleAddOrder}
+            userProfile={userProfile}
+          />
+        )}
+
+        {activeView === 'profile' && (
+          <ProfileView
+            currentUser={currentUser}
+            userProfile={userProfile}
+            onSaveProfile={handleSaveProfile}
+            onNavigate={handleNavigate}
+            onRefreshProfile={handleRefreshProfile}
           />
         )}
 
@@ -286,6 +494,11 @@ export default function App() {
             onNavigate={handleNavigate}
             onSelectActiveOrder={setActiveOrder}
             initialTab={dashboardActiveTab}
+            userProfile={userProfile}
+            onSaveProfile={handleSaveProfile}
+            currentUser={currentUser}
+            onRefreshProfile={handleRefreshProfile}
+            rewardsPoints={rewardsPoints}
           />
         )}
 

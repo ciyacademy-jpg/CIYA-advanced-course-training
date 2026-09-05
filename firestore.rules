@@ -1,0 +1,75 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all unknown paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation helper for UserProfile
+    function isValidUserProfile(data, userId) {
+      return data.userId == userId &&
+        data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+        data.email is string && data.email.size() <= 150 &&
+        data.phoneNumber is string && data.phoneNumber.size() >= 7 && data.phoneNumber.size() <= 30 &&
+        data.streetAddress is string && data.streetAddress.size() >= 3 && data.streetAddress.size() <= 300 &&
+        data.cityArea is string && data.cityArea.size() >= 2 && data.cityArea.size() <= 100 &&
+        data.state is string && data.state.size() >= 2 && data.state.size() <= 50 &&
+        (!('deliveryNotes' in data) || (data.deliveryNotes is string && data.deliveryNotes.size() <= 500)) &&
+        (!('dietaryPreference' in data) || (data.dietaryPreference is string && data.dietaryPreference.size() <= 100)) &&
+        (!('favoriteCategory' in data) || (data.favoriteCategory is string && data.favoriteCategory.size() <= 100)) &&
+        (!('completedAt' in data) || (data.completedAt is string && data.completedAt.size() <= 100)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 100));
+    }
+
+    // Connection ping doc for client readiness checks
+    match /test/{testId} {
+      allow get: if true;
+    }
+
+    // User Profile: strictly isolated by userId
+    match /users/{userId} {
+      // Individual users can only get their own profile. Listing all users is strictly denied.
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      // Creation: must be signed in, owner of userId, valid ID and valid profile payload
+      allow create: if isOwner(userId) && 
+        isValidId(userId) && 
+        isValidUserProfile(incoming(), userId) && 
+        incoming().userId == request.auth.uid;
+
+      // Update: must be owner, valid payload, cannot mutate userId
+      allow update: if isOwner(userId) && 
+        isValidId(userId) && 
+        isValidUserProfile(incoming(), userId) && 
+        incoming().userId == existing().userId;
+
+      // Delete: only owner can delete their own profile
+      allow delete: if isOwner(userId) && isValidId(userId);
+    }
+  }
+}

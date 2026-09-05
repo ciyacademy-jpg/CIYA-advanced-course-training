@@ -2,6 +2,10 @@ import {
   sendEmailVerification, 
   sendPasswordResetEmail, 
   signOut,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
   User, 
   AuthError 
 } from 'firebase/auth';
@@ -14,6 +18,64 @@ export interface AuthActionResult {
   success: boolean;
   message: string;
   code?: string;
+  user?: User | null;
+}
+
+export const googleAuthProvider = new GoogleAuthProvider();
+googleAuthProvider.setCustomParameters({
+  prompt: 'select_account'
+});
+
+/**
+ * Initiates Google sign-in using popup with automatic redirect fallback if popup fails or is blocked.
+ */
+export async function signInWithGoogle(): Promise<AuthActionResult> {
+  try {
+    const result = await signInWithPopup(auth, googleAuthProvider);
+    return {
+      success: true,
+      message: 'Successfully signed in with Google!',
+      user: result.user,
+    };
+  } catch (popupError: any) {
+    console.warn('Google popup sign-in encountered an issue, attempting redirect fallback:', popupError);
+    // If popup is blocked, cancelled, or fails in certain environments, fallback to redirect
+    try {
+      await signInWithRedirect(auth, googleAuthProvider);
+      return {
+        success: true,
+        message: 'Redirecting to Google sign in...',
+        user: null,
+      };
+    } catch (redirectError: any) {
+      console.warn('Google redirect sign-in notice:', redirectError?.code || redirectError);
+      return handleAuthError(redirectError, 'Failed to sign in with Google. Please try again.');
+    }
+  }
+}
+
+/**
+ * Checks for and handles redirect result after a redirect-based Google sign in.
+ */
+export async function handleGoogleRedirectResult(): Promise<AuthActionResult> {
+  try {
+    const result = await getRedirectResult(auth);
+    if (result && result.user) {
+      return {
+        success: true,
+        message: 'Successfully signed in with Google!',
+        user: result.user,
+      };
+    }
+    return {
+      success: true,
+      message: '',
+      user: null,
+    };
+  } catch (error: unknown) {
+    console.warn('getRedirectResult notice:', error);
+    return handleAuthError(error, 'Google authentication redirect failed. Please try again.');
+  }
 }
 
 /**
@@ -61,7 +123,7 @@ export async function sendVerificationEmailToCurrentUser(currentUser?: User | nu
       message: `Verification email sent to ${user.email}. Please check your inbox and click the link to verify your account.`,
     };
   } catch (error: unknown) {
-    console.error('sendEmailVerification error:', error);
+    console.warn('sendEmailVerification notice:', error);
     return handleAuthError(error, 'Failed to send verification email.');
   }
 }
@@ -110,7 +172,7 @@ export async function triggerPasswordResetEmail(email: string): Promise<AuthActi
       message: `Password reset link sent to ${trimmedEmail}. Check your inbox and spam folder.`,
     };
   } catch (error: unknown) {
-    console.error('sendPasswordResetEmail error:', error);
+    console.warn('sendPasswordResetEmail notice:', error);
     return handleAuthError(error, 'Could not send password reset email.');
   }
 }
@@ -137,6 +199,12 @@ function handleAuthError(error: unknown, fallbackMessage: string): AuthActionRes
       break;
     case 'auth/quota-exceeded':
       message = 'Email service daily limit reached. Please try again tomorrow or contact support.';
+      break;
+    case 'auth/unauthorized-domain':
+      message = 'This domain is not authorized for Google sign-in. Please sign in using your email and password.';
+      break;
+    case 'auth/popup-closed-by-user':
+      message = 'Sign-in window was closed before completing authentication. Please try again.';
       break;
     case 'auth/unauthorized-continue-uri':
       message = 'The current web domain is not authorized in authentication settings.';
@@ -165,13 +233,18 @@ function handleAuthError(error: unknown, fallbackMessage: string): AuthActionRes
  */
 export async function signOutCurrentUser(): Promise<AuthActionResult> {
   try {
+    try {
+      localStorage.removeItem('freshbasket_current_user_profile');
+    } catch {
+      // ignore
+    }
     await signOut(auth);
     return {
       success: true,
       message: 'You have been signed out successfully.',
     };
   } catch (error: unknown) {
-    console.error('signOut error:', error);
+    console.warn('signOut notice:', error);
     return handleAuthError(error, 'Failed to sign out. Please try again.');
   }
 }

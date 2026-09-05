@@ -23,7 +23,7 @@ export default function SmartAssistant({ products, onAddToCart, onNavigate }: Sm
     {
       id: 'welcome',
       sender: 'ai',
-      text: "Ẹ lẹ́yà! I'm your FreshBasket Smart Shopping Assistant. I can suggest ingredient substitutions, build budget grocery packs, or help you find cooking ingredients. What are we preparing today?",
+      text: "Hello! I'm your FreshBasket Smart Shopping Assistant. I can suggest ingredient substitutions, build budget grocery packs, or help you find cooking ingredients. What are we preparing today?",
       timestamp: new Date(),
       suggestions: [
         { text: "🍲 List soup ingredients", action: "soup_ingredients" },

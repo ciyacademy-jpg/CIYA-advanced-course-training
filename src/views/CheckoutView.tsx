@@ -1,29 +1,44 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CreditCard, Truck, Calendar, Sparkles, CheckCircle, ArrowRight, ArrowLeft, ShieldCheck, Landmark, Check } from 'lucide-react';
-import { CartItem, Order } from '../types';
+import { CartItem, Order, UserProfileData } from '../types';
 
 interface CheckoutViewProps {
   cart: CartItem[];
   onClearCart: () => void;
   onNavigate: (view: string) => void;
   onAddOrder: (order: Order) => void;
+  userProfile?: UserProfileData | null;
 }
 
 export default function CheckoutView({
   cart,
   onClearCart,
   onNavigate,
-  onAddOrder
+  onAddOrder,
+  userProfile
 }: CheckoutViewProps) {
   const [formData, setFormData] = useState({
-    fullName: "Yinka Olamide",
-    phone: "+234 812 456 7812",
-    street: "Apartment 4B, Oceanview Towers, 24 Admiralty Way",
-    city: "Lekki Phase 1",
-    state: "Lagos State",
-    notes: ""
+    fullName: userProfile?.fullName || "",
+    phone: userProfile?.phoneNumber || "",
+    street: userProfile?.streetAddress || "",
+    city: userProfile?.cityArea || "Lagos",
+    state: userProfile?.state || "Lagos State",
+    notes: userProfile?.deliveryNotes || ""
   });
+
+  useEffect(() => {
+    if (userProfile) {
+      setFormData(prev => ({
+        fullName: prev.fullName || userProfile.fullName || "",
+        phone: prev.phone || userProfile.phoneNumber || "",
+        street: prev.street || userProfile.streetAddress || "",
+        city: prev.city || userProfile.cityArea || "Lagos",
+        state: prev.state || userProfile.state || "Lagos State",
+        notes: prev.notes || userProfile.deliveryNotes || ""
+      }));
+    }
+  }, [userProfile]);
   const [deliveryDate, setDeliveryDate] = useState("Tomorrow, July 22");
   const [deliverySlot, setDeliverySlot] = useState("Morning (9:00 AM - 12:00 PM)");
   const [paymentMethod, setPaymentMethod] = useState<'paystack' | 'bank' | 'cod'>('paystack');
@@ -417,7 +432,7 @@ export default function CheckoutView({
                 </span>
                 <h3 className="text-xl lg:text-2xl font-bold font-sans text-white mt-2">Order Placed Successfully!</h3>
                 <p className="text-xs text-white/60">
-                  Ẹ ṣeun, {formData.fullName}! Your payment has been secured and dispatched to Epe farm pickers.
+                  Thank you, {formData.fullName}! Your payment has been secured and dispatched to Epe farm pickers.
                 </p>
               </div>
 
@@ -442,7 +457,7 @@ export default function CheckoutView({
               </div>
 
               <p className="text-[11px] text-white/40 leading-snug">
-                Please write down or screenshot your <b>OTP: {placedOrder.otp}</b>. Our courier will request this digits at Admiralty Way to verify successful drop-off.
+                Please write down or screenshot your <b>OTP: {placedOrder.otp}</b>. Our courier will request these digits at {placedOrder.deliveryAddress?.street || 'your delivery address'} to verify successful drop-off.
               </p>
 
               <div className="flex gap-3">

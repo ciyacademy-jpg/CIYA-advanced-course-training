@@ -129,3 +129,19 @@ export interface MealPlanDay {
   lunch?: Recipe;
   dinner?: Recipe;
 }
+
+export interface UserProfileData {
+  userId: string;
+  fullName: string;
+  email: string;
+  phoneNumber: string;
+  streetAddress: string;
+  cityArea: string;
+  state: string;
+  deliveryNotes?: string;
+  dietaryPreference: string;
+  favoriteCategory: string;
+  completedAt: string;
+  updatedAt?: string;
+  backendSynced?: boolean;
+}
