@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, ShoppingBasket, Heart, User, MapPin, ChevronDown, Sparkles, Flame, Calendar, Gift, Menu, X, Check, LogIn, LogOut, UserCheck } from 'lucide-react';
-import { Product, UserProfileData } from '../types';
+import { Search, ShoppingBasket, Heart, User, MapPin, ChevronDown, Sparkles, Flame, Calendar, Gift, Menu, X, Check, LogIn, LogOut, UserCheck, ShieldCheck, Crown } from 'lucide-react';
+import { Product, UserProfileData, AdminRole } from '../types';
 import { User as FirebaseUser } from 'firebase/auth';
 import { signOutCurrentUser } from '../lib/authService';
 import { isProfileComplete } from '../lib/userProfileService';
+import { SUPER_ADMIN_EMAIL } from '../lib/adminService';
 
 interface NavbarProps {
   currentView: string;
@@ -16,6 +17,8 @@ interface NavbarProps {
   onAddToCart: (product: Product, qty: number) => void;
   currentUser?: FirebaseUser | null;
   userProfile?: UserProfileData | null;
+  currentRole?: AdminRole | null;
+  onOpenAdminPortal?: () => void;
 }
 
 const locations = [
@@ -50,7 +53,9 @@ export default function Navbar({
   onQuickView,
   onAddToCart,
   currentUser,
-  userProfile
+  userProfile,
+  currentRole,
+  onOpenAdminPortal
 }: NavbarProps) {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(locations[0]);
@@ -162,7 +167,7 @@ export default function Navbar({
                             setSearchQuery("");
                           }}
                         >
-                          <img src={p.imageUrls[0]} alt={p.name} className="h-10 w-10 object-cover rounded-lg" />
+                          <img src={p.imageUrls?.[0] || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600'} alt={p.name} className="h-10 w-10 object-cover rounded-lg" />
                           <div className="flex-1 min-w-0">
                             <h4 className="text-xs font-bold text-white truncate">{p.name}</h4>
                             <p className="text-[10px] text-white/60 truncate">{p.localName || p.category}</p>
@@ -286,6 +291,24 @@ export default function Navbar({
                           <ShoppingBasket className="h-3.5 w-3.5 text-[#16A34A]" />
                           <span>Order History</span>
                         </button>
+
+                        {currentRole && (
+                          <button
+                            onClick={() => {
+                              setShowUserDropdown(false);
+                              if (onOpenAdminPortal) onOpenAdminPortal();
+                            }}
+                            className="w-full text-left px-3 py-2 hover:bg-amber-500/20 bg-amber-500/10 rounded-xl flex items-center justify-between text-amber-200 cursor-pointer border border-amber-500/20 font-bold"
+                          >
+                            <div className="flex items-center gap-2">
+                              <ShieldCheck className="h-3.5 w-3.5 text-amber-400" />
+                              <span>Admin Produce Center</span>
+                            </div>
+                            <span className="text-[9px] uppercase px-1.5 py-0.2 bg-amber-500/30 text-amber-200 rounded font-black">
+                              {currentRole.replace('_', ' ')}
+                            </span>
+                          </button>
+                        )}
                       </div>
                       <div className="pt-1 border-t border-white/10">
                         <button
@@ -311,6 +334,21 @@ export default function Navbar({
               >
                 <User className="h-4 w-4 text-white" />
                 <span className="hidden sm:inline">Sign In / Up</span>
+              </button>
+            )}
+
+            {/* Admin Portal Header Button (Only visible to authenticated FreshBasket staff) */}
+            {currentRole && (
+              <button
+                onClick={onOpenAdminPortal}
+                className="flex items-center gap-1.5 py-1.5 px-3 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded-full text-xs font-bold text-amber-300 shadow transition cursor-pointer"
+                title={`Admin Produce Center (${currentRole.replace('_', ' ').toUpperCase()})`}
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-amber-400" />
+                <span className="hidden sm:inline">Admin Center</span>
+                <span className="text-[9px] uppercase px-1.5 py-0.2 bg-amber-500/30 text-amber-200 rounded font-black">
+                  {currentRole.replace('_', ' ')}
+                </span>
               </button>
             )}
 
@@ -502,6 +540,27 @@ export default function Navbar({
                   <LogOut className="h-4 w-4 text-red-400" />
                   <span>Sign Out / Logout</span>
                 </button>
+              )}
+
+              {currentRole && (
+                <>
+                  <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider border-b border-white/10 pb-1 pt-2">Administration & Operations</p>
+                  <button
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      if (onOpenAdminPortal) onOpenAdminPortal();
+                    }}
+                    className="w-full text-left text-sm font-bold flex items-center justify-between text-amber-300 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/30"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="h-4 w-4 text-amber-400" />
+                      <span>Admin Produce Center</span>
+                    </div>
+                    <span className="text-[10px] uppercase font-black px-2 py-0.5 bg-amber-500/30 text-amber-200 rounded">
+                      {currentRole.replace('_', ' ')}
+                    </span>
+                  </button>
+                </>
               )}
 
               <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider border-b border-white/10 pb-1 pt-2">Shop & Discover</p>

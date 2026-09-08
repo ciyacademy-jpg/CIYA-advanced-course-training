@@ -89,7 +89,7 @@ export default function CartView({
               className="bg-white/10 rounded-2xl border border-white/15 p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-2xl backdrop-blur-md text-white"
             >
               <div className="flex items-center gap-4 w-full sm:w-auto">
-                <img src={item.product.imageUrls[0]} alt="" className="h-16 w-16 object-cover rounded-xl shrink-0" />
+                <img src={item.product.imageUrls?.[0] || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600'} alt="" className="h-16 w-16 object-cover rounded-xl shrink-0" />
                 <div className="min-w-0">
                   <h4 className="text-xs font-bold text-white line-clamp-1">{item.product.name}</h4>
                   <p className="text-[10px] text-white/50 font-semibold uppercase">{item.product.category}</p>

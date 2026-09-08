@@ -81,12 +81,173 @@
         "cityArea",
         "state"
       ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Administrator account with hierarchical role-based privileges",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Sanitized email or UID of the admin user",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "Gmail address of the admin staff",
+          "format": "email",
+          "maxLength": 150
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name or designation of the administrator",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "role": {
+          "type": "string",
+          "description": "Admin rank defining operation permissions",
+          "enum": ["super_admin", "manager", "supervisor", "sales_rep"]
+        },
+        "addedBy": {
+          "type": "string",
+          "description": "Email or ID of the super admin who provisioned this staff account",
+          "maxLength": 150
+        },
+        "addedAt": {
+          "type": "string",
+          "description": "ISO date string when role was assigned",
+          "maxLength": 100
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO date string of last profile update",
+          "maxLength": 100
+        },
+        "isImmutable": {
+          "type": "boolean",
+          "description": "Flag for root super admin comwebdot@gmail.com which cannot be removed or altered"
+        }
+      },
+      "required": [
+        "id",
+        "email",
+        "name",
+        "role"
+      ]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Farm fresh grocery or harvest inventory item",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique product code or slug",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Common product title",
+          "minLength": 2,
+          "maxLength": 150
+        },
+        "localName": {
+          "type": "string",
+          "description": "Traditional Nigerian market designation",
+          "maxLength": 150
+        },
+        "category": {
+          "type": "string",
+          "description": "Produce classification (e.g. Fresh Vegetables, Roots & Tubers)",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "price": {
+          "type": "number",
+          "description": "Unit price in Nigerian Naira"
+        },
+        "originalPrice": {
+          "type": "number",
+          "description": "Optional regular price before discount"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Customer score between 1.0 and 5.0"
+        },
+        "reviewsCount": {
+          "type": "number",
+          "description": "Number of validated customer reviews"
+        },
+        "freshnessScore": {
+          "type": "number",
+          "description": "Quality score percentage between 0 and 100"
+        },
+        "freshnessText": {
+          "type": "string",
+          "description": "Harvest indicator e.g. Harvested yesterday morning",
+          "maxLength": 150
+        },
+        "origin": {
+          "type": "string",
+          "description": "Farm source region e.g. Jos, Plateau State",
+          "maxLength": 150
+        },
+        "description": {
+          "type": "string",
+          "description": "Product details and culinary usage",
+          "maxLength": 1000
+        },
+        "size": {
+          "type": "string",
+          "description": "Standard packaging size",
+          "maxLength": 100
+        },
+        "stock": {
+          "type": "number",
+          "description": "Available harvest units in warehouse"
+        },
+        "isOrganic": {
+          "type": "boolean",
+          "description": "Whether pesticide and chemical preservative free"
+        },
+        "isImported": {
+          "type": "boolean",
+          "description": "Domestic farm vs imported item"
+        },
+        "deliveryTimeEstimate": {
+          "type": "string",
+          "description": "Logistics dispatch estimate",
+          "maxLength": 100
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last inventory modification",
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "category",
+        "price",
+        "stock",
+        "description"
+      ]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "Private user delivery profile and preferences strictly owned and accessed by {userId}"
+    },
+    "/admins/{adminId}": {
+      "schema": "AdminUser",
+      "description": "Admin staff registry with role-based access control (super_admin, manager, supervisor, sales_rep)"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Live farm produce inventory items managed by authorized administrators"
     }
   }
 }

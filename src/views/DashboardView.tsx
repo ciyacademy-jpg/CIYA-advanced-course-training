@@ -20,7 +20,7 @@ import {
   Sparkles,
   Edit3
 } from 'lucide-react';
-import { Order, Product, ReferralMilestone, UserProfileData } from '../types';
+import { Order, Product, ReferralMilestone, UserProfileData, AdminRole } from '../types';
 import { signOutCurrentUser } from '../lib/authService';
 import UserProfileForm from '../components/UserProfileForm';
 import { User as FirebaseUser } from 'firebase/auth';
@@ -39,6 +39,8 @@ interface DashboardViewProps {
   currentUser?: FirebaseUser | null;
   onRefreshProfile?: () => Promise<boolean>;
   rewardsPoints?: number;
+  currentRole?: AdminRole | null;
+  onOpenAdminPortal?: () => void;
 }
 
 const initialMilestones: ReferralMilestone[] = [
@@ -60,7 +62,9 @@ export default function DashboardView({
   onSaveProfile,
   currentUser,
   onRefreshProfile,
-  rewardsPoints = 0
+  rewardsPoints = 0,
+  currentRole,
+  onOpenAdminPortal
 }: DashboardViewProps) {
   const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [milestones, setMilestones] = useState<ReferralMilestone[]>(initialMilestones);
@@ -71,10 +75,10 @@ export default function DashboardView({
   // Dynamic user name and details strictly scoped to current authenticated user
   const activeProfile = (userProfile && currentUser && userProfile.userId === currentUser.uid) ? userProfile : null;
   const displayName = activeProfile?.fullName || currentUser?.displayName || currentUser?.email?.split('@')[0] || "Valued Member";
-  const userInitials = displayName
+  const userInitials = (displayName || "Valued Member")
     .split(" ")
     .filter(Boolean)
-    .map((n: string) => n[0])
+    .map((n: string) => n?.[0] || "")
     .join("")
     .slice(0, 2)
     .toUpperCase() || "MB";
@@ -128,8 +132,14 @@ export default function DashboardView({
             {userInitials}
           </div>
           <div>
-            <div className="flex items-center gap-2 justify-center md:justify-start">
+            <div className="flex flex-wrap items-center gap-2 justify-center md:justify-start">
               <h2 className="text-xl font-bold text-white">Welcome, {displayName}!</h2>
+              {currentRole && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-300 bg-amber-500/20 px-2.5 py-0.5 rounded-full border border-amber-400/40 uppercase tracking-wide">
+                  <ShieldCheck className="h-3 w-3 text-amber-400" />
+                  {currentRole.replace('_', ' ')} Admin
+                </span>
+              )}
               {userProfile && (
                 <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-400/30">
                   <ShieldCheck className="h-3 w-3" />
@@ -158,6 +168,21 @@ export default function DashboardView({
         
         {/* Left Sidebar menu lists */}
         <div className="lg:col-span-3 bg-white/10 border border-white/15 rounded-3xl p-4 space-y-1 shadow-2xl backdrop-blur-md">
+          {currentRole && onOpenAdminPortal && (
+            <button
+              onClick={onOpenAdminPortal}
+              className="w-full flex items-center justify-between rounded-xl px-4 py-3 text-xs font-bold transition text-left cursor-pointer bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 mb-2 shadow"
+            >
+              <div className="flex items-center gap-2.5">
+                <ShieldCheck className="h-4.5 w-4.5 text-amber-400" />
+                <span>Admin Produce Center</span>
+              </div>
+              <span className="rounded-full px-2 py-0.5 text-[9px] font-black uppercase bg-amber-500/40 text-amber-200">
+                {currentRole.replace('_', ' ')}
+              </span>
+            </button>
+          )}
+
           {[
             { id: "overview", label: "Dashboard Overview", icon: User },
             { id: "profile", label: "My Profile & Delivery Form", icon: UserCheck, badge: userProfile ? undefined : "Fill" },
@@ -477,7 +502,7 @@ export default function DashboardView({
                 <div className="grid sm:grid-cols-2 gap-4">
                   {wishlistProducts.map((p) => (
                     <div key={p.id} className="bg-white/5 rounded-2xl border border-white/10 p-3 flex gap-3.5 items-center group">
-                      <img src={p.imageUrls[0]} alt="" className="h-16 w-16 object-cover rounded-xl shrink-0" />
+                      <img src={p.imageUrls?.[0] || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600'} alt="" className="h-16 w-16 object-cover rounded-xl shrink-0" />
                       <div className="flex-1 min-w-0">
                         <h4 className="text-xs font-bold text-white group-hover:text-[#FACC15] transition truncate">{p.name}</h4>
                         <p className="text-xs font-extrabold text-[#FACC15] mt-1">₦{p.price.toLocaleString()}</p>

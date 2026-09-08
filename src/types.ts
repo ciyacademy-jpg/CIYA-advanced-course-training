@@ -145,3 +145,24 @@ export interface UserProfileData {
   updatedAt?: string;
   backendSynced?: boolean;
 }
+
+export type AdminRole = 'super_admin' | 'manager' | 'supervisor' | 'sales_rep';
+
+export interface AdminUser {
+  id: string; // Sanitized email or doc ID
+  email: string;
+  name: string;
+  role: AdminRole;
+  addedBy: string;
+  addedAt: string;
+  updatedAt?: string;
+  isImmutable?: boolean;
+}
+
+export interface AdminRolePermissions {
+  canCreate: boolean; // super_admin only
+  canRead: boolean; // all admin roles
+  canUpdate: boolean; // super_admin, manager
+  canDelete: boolean; // super_admin, manager, supervisor
+  canManageAdmins: boolean; // super_admin only
+}

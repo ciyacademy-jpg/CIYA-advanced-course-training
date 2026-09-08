@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { SlidersHorizontal, Grid, List, Search, Star, Heart, ShoppingBag, Eye, X, Check, RefreshCw } from 'lucide-react';
-import { Product } from '../types';
+import { SlidersHorizontal, Grid, List, Search, Star, Heart, ShoppingBag, Eye, X, Check, RefreshCw, Plus, Edit3, Trash2 } from 'lucide-react';
+import { Product, AdminRole } from '../types';
+import { getAdminPermissions } from '../lib/adminService';
 
 interface ShopViewProps {
   products: Product[];
@@ -11,6 +12,10 @@ interface ShopViewProps {
   onQuickView: (product: Product) => void;
   initialCategory?: string;
   initialSearch?: string;
+  currentRole?: AdminRole | null;
+  onEditProduct?: (product: Product) => void;
+  onDeleteProduct?: (id: string) => Promise<void>;
+  onAddNewProduce?: () => void;
 }
 
 export default function ShopView({
@@ -20,8 +25,13 @@ export default function ShopView({
   wishlist,
   onQuickView,
   initialCategory = "",
-  initialSearch = ""
+  initialSearch = "",
+  currentRole,
+  onEditProduct,
+  onDeleteProduct,
+  onAddNewProduce
 }: ShopViewProps) {
+  const permissions = getAdminPermissions(currentRole);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
@@ -387,7 +397,7 @@ export default function ShopView({
                       </div>
 
                       <div className="relative h-44 w-full rounded-2xl overflow-hidden bg-white/5 border border-white/10 mb-3 cursor-pointer" onClick={() => onQuickView(p)}>
-                        <img src={p.imageUrls[0]} alt={p.name} className="object-cover h-full w-full group-hover:scale-105 transition duration-500" />
+                        <img src={p.imageUrls?.[0] || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600'} alt={p.name} className="object-cover h-full w-full group-hover:scale-105 transition duration-500" />
                       </div>
 
                       <div className="flex-1 flex flex-col justify-between space-y-2">
@@ -438,7 +448,7 @@ export default function ShopView({
                 return (
                   <div key={p.id} className="bg-white/10 rounded-3xl border border-white/15 p-4 flex flex-col sm:flex-row items-center gap-4 hover:border-[#16A34A] hover:bg-white/15 hover:shadow-2xl transition group backdrop-blur-md text-white">
                     <div className="h-28 w-28 shrink-0 rounded-2xl overflow-hidden bg-white/5 border border-white/10 relative cursor-pointer" onClick={() => onQuickView(p)}>
-                      <img src={p.imageUrls[0]} alt={p.name} className="object-cover h-full w-full group-hover:scale-105 transition" />
+                      <img src={p.imageUrls?.[0] || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600'} alt={p.name} className="object-cover h-full w-full group-hover:scale-105 transition" />
                     </div>
                     
                     <div className="flex-1 min-w-0 space-y-1.5 text-center sm:text-left">

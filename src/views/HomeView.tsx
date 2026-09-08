@@ -1,7 +1,33 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Flame, ShieldCheck, Truck, Percent, Zap, ArrowRight, Heart, ShoppingBag, Eye, Star, Apple, Scale, Utensils, CheckCircle, Compass, Users, HeartHandshake } from 'lucide-react';
-import { Product } from '../types';
+import { 
+  Sparkles, 
+  Flame, 
+  ShieldCheck, 
+  Truck, 
+  Percent, 
+  Zap, 
+  ArrowRight, 
+  Heart, 
+  ShoppingBag, 
+  Eye, 
+  Star, 
+  Apple, 
+  Scale, 
+  Utensils, 
+  CheckCircle, 
+  Compass, 
+  Users, 
+  HeartHandshake,
+  Edit3,
+  Trash2,
+  Plus,
+  Crown,
+  Settings
+} from 'lucide-react';
+import { Product, AdminRole } from '../types';
+import { getAdminPermissions, SUPER_ADMIN_EMAIL } from '../lib/adminService';
+import { HARVEST_CATEGORIES } from '../lib/productService';
 
 interface HomeViewProps {
   products: Product[];
@@ -10,6 +36,12 @@ interface HomeViewProps {
   wishlist: string[];
   onQuickView: (product: Product) => void;
   onNavigate: (view: string) => void;
+  currentRole?: AdminRole | null;
+  currentEmail?: string | null;
+  onOpenAdminPortal?: () => void;
+  onEditProduct?: (product: Product) => void;
+  onDeleteProduct?: (id: string) => Promise<void>;
+  onAddNewProduce?: () => void;
 }
 
 const liveOrders = [
@@ -55,11 +87,24 @@ export default function HomeView({
   onToggleWishlist,
   wishlist,
   onQuickView,
-  onNavigate
+  onNavigate,
+  currentRole,
+  currentEmail,
+  onOpenAdminPortal,
+  onEditProduct,
+  onDeleteProduct,
+  onAddNewProduce
 }: HomeViewProps) {
   // Live ticker active index
   const [tickerIndex, setTickerIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState({ hrs: 14, mins: 42, secs: 19 });
+  
+  // Harvest category filter
+  const [selectedHarvestCategory, setSelectedHarvestCategory] = useState<string>('All Harvest');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Admin permissions resolution
+  const permissions = getAdminPermissions(currentRole);
   
   // Smart planner state
   const [plannerMode, setPlannerMode] = useState<'soup' | 'student' | 'family'>('soup');
@@ -328,7 +373,7 @@ export default function HomeView({
                   </span>
                   
                   <div className="h-32 w-full rounded-xl overflow-hidden bg-white/5 relative cursor-pointer" onClick={() => onQuickView(prod)}>
-                    <img src={prod.imageUrls[0]} alt={prod.name} className="object-cover h-full w-full hover:scale-105 transition duration-500" />
+                    <img src={prod.imageUrls?.[0] || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600'} alt={prod.name} className="object-cover h-full w-full hover:scale-105 transition duration-500" />
                   </div>
                   
                   <div className="mt-3 flex-1 flex flex-col justify-between">
@@ -380,32 +425,96 @@ export default function HomeView({
         </div>
       </section>
 
-      {/* Featured Products Section (15+ Items grid) */}
-      <section className="max-w-7xl mx-auto px-4 lg:px-8 py-16">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 border-b border-white/10 pb-4 gap-4">
+      {/* Fresh Basket Harvest Section (20+ Items with Live Categories & Admin Management) */}
+      <section id="fresh-basket-harvest" className="max-w-7xl mx-auto px-4 lg:px-8 py-16">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 border-b border-white/10 pb-4 gap-4">
           <div>
-            <span className="text-[10px] font-black uppercase text-[#FACC15] tracking-wider">Fresh Basket Harvest</span>
-            <h2 className="text-2xl font-bold tracking-tight text-white font-sans mt-1">Featured Farm Fresh Produce</h2>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black uppercase text-[#FACC15] tracking-wider">Fresh Basket Harvest</span>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                {products.length} Farm Fresh Items Available
+              </span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-sans mt-1">
+              Fresh Basket Harvest Produce
+            </h2>
+            <p className="text-xs text-white/60 mt-1">
+              Direct-from-farm daily harvests with real-time inventory and pricing synchronization.
+            </p>
           </div>
-          <div className="flex gap-2">
+
+          <div className="flex flex-wrap items-center gap-2">
+            {currentRole && (
+              <button
+                onClick={onOpenAdminPortal}
+                className="text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 px-3.5 py-2 rounded-xl border border-amber-500/40 flex items-center gap-2 transition cursor-pointer"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                <span>Admin Operations Center</span>
+              </button>
+            )}
+
+            {permissions.canCreate && (
+              <button
+                onClick={onAddNewProduce}
+                className="text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl shadow flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Add Produce</span>
+              </button>
+            )}
+
             <button
               onClick={() => onNavigate('shop')}
               className="text-xs font-bold text-[#FACC15] hover:text-white hover:bg-white/10 px-4 py-2 rounded-xl border border-white/20 transition cursor-pointer"
             >
-              Shop All {products.length}+ Items
+              Catalog View ({products.length})
             </button>
           </div>
         </div>
 
+        {/* Harvest Category Filter Tabs */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-4 mb-6 scrollbar-thin scrollbar-thumb-white/20">
+          {HARVEST_CATEGORIES.map((cat) => {
+            const count = cat === 'All Harvest'
+              ? products.length
+              : products.filter(p => p.category === cat).length;
+            const isSelected = selectedHarvestCategory === cat;
+
+            return (
+              <button
+                key={cat}
+                onClick={() => setSelectedHarvestCategory(cat)}
+                className={`whitespace-nowrap px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer border ${
+                  isSelected
+                    ? 'bg-emerald-600 text-white border-emerald-500 shadow-md'
+                    : 'bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border-white/10'
+                }`}
+              >
+                <span>{cat}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-md ${isSelected ? 'bg-black/20 text-white' : 'bg-white/10 text-white/60'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Produce Cards Grid (20+ Farm Fresh Items) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
-          {featuredProducts.map((prod) => {
+          {(selectedHarvestCategory === 'All Harvest'
+            ? products
+            : products.filter(p => p.category === selectedHarvestCategory)
+          ).map((prod) => {
             const hasDiscount = !!prod.originalPrice;
             const discountPct = hasDiscount && prod.originalPrice ? Math.round(((prod.originalPrice - prod.price) / prod.originalPrice) * 100) : 0;
             const isWishlisted = wishlist.includes(prod.id);
 
             return (
-              <div key={prod.id} className="bg-white/10 rounded-2xl border border-white/15 hover:border-[#16A34A] hover:bg-white/15 hover:shadow-xl p-3 flex flex-col justify-between transition-all duration-300 relative group backdrop-blur-md text-white">
-                
+              <div 
+                key={prod.id} 
+                className="bg-white/10 rounded-2xl border border-white/15 hover:border-[#16A34A] hover:bg-white/15 hover:shadow-xl p-3 flex flex-col justify-between transition-all duration-300 relative group backdrop-blur-md text-white"
+              >
                 {/* Wishlist Heart Icon absolute */}
                 <button
                   onClick={() => onToggleWishlist(prod)}
@@ -428,11 +537,17 @@ export default function HomeView({
                       🌿 ULTRA FRESH
                     </span>
                   )}
+                  <span className="bg-black/60 backdrop-blur-md text-white/90 text-[8px] font-mono px-2 py-0.5 rounded-md">
+                    Stock: {prod.stock}
+                  </span>
                 </div>
 
                 {/* Product Media Display */}
-                <div className="relative h-40 w-full rounded-xl overflow-hidden bg-white/5 mb-3.5 cursor-pointer" onClick={() => onQuickView(prod)}>
-                  <img src={prod.imageUrls[0]} alt={prod.name} className="object-cover h-full w-full group-hover:scale-105 transition duration-500" />
+                <div 
+                  className="relative h-40 w-full rounded-xl overflow-hidden bg-white/5 mb-3.5 cursor-pointer" 
+                  onClick={() => onQuickView(prod)}
+                >
+                  <img src={prod.imageUrls?.[0] || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600'} alt={prod.name} className="object-cover h-full w-full group-hover:scale-105 transition duration-500" />
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition duration-300">
                     <span className="rounded-full bg-white px-3 py-1.5 text-[10px] font-bold text-stone-800 flex items-center gap-1 shadow">
                       <Eye className="h-3.5 w-3.5 text-stone-600" /> Quick View
@@ -444,11 +559,14 @@ export default function HomeView({
                 <div className="flex-1 flex flex-col justify-between space-y-2">
                   <div>
                     <span className="text-[9px] font-bold text-white/50 uppercase tracking-widest">{prod.category}</span>
-                    <h4 className="text-xs font-bold text-white mt-1 leading-snug cursor-pointer hover:text-[#FACC15] transition line-clamp-2" onClick={() => onQuickView(prod)}>
+                    <h4 
+                      className="text-xs font-bold text-white mt-1 leading-snug cursor-pointer hover:text-[#FACC15] transition line-clamp-2" 
+                      onClick={() => onQuickView(prod)}
+                    >
                       {prod.name}
                     </h4>
                     {prod.localName && (
-                      <p className="text-[10px] text-white/60 italic font-medium">{prod.localName}</p>
+                      <p className="text-[10px] text-yellow-400/90 italic font-medium">"{prod.localName}"</p>
                     )}
                     
                     {/* Star Rating display */}
@@ -468,7 +586,7 @@ export default function HomeView({
                       <span className="h-1.5 w-1.5 rounded-full bg-[#16A34A]"></span>
                       {prod.freshnessText}
                     </p>
-                    <p className="text-[9px] text-white/60 font-medium">🚚 Est. Delivery: {prod.deliveryTimeEstimate}</p>
+                    <p className="text-[9px] text-white/60 font-medium truncate">📍 Origin: {prod.origin}</p>
                   </div>
 
                   {/* Price & Add to Cart Action */}
@@ -480,6 +598,7 @@ export default function HomeView({
                     <button
                       onClick={() => onAddToCart(prod, 1)}
                       className="rounded-full bg-[#16A34A] hover:bg-[#15803d] text-white p-2.5 shadow transition-all cursor-pointer"
+                      title="Add to basket"
                     >
                       <ShoppingBag className="h-4 w-4 text-white" />
                     </button>

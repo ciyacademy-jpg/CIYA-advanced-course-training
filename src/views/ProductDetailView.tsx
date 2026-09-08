@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Star, Heart, ShoppingBag, ShieldCheck, HelpCircle, ChevronRight, Share2, Info, ArrowLeft } from 'lucide-react';
 import { Product } from '../types';
@@ -22,10 +22,16 @@ export default function ProductDetailView({
   onQuickView,
   onNavigate
 }: ProductDetailViewProps) {
-  const [selectedImage, setSelectedImage] = useState(product.imageUrls[0]);
+  const initialImg = product?.imageUrls?.[0] || (product as any)?.image || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600';
+  const [selectedImage, setSelectedImage] = useState(initialImg);
   const [quantity, setQuantity] = useState(1);
   const [selectedSize, setSelectedSize] = useState(product.size);
   const [activeTab, setActiveTab] = useState<'info' | 'nutrition' | 'storage'>('info');
+
+  useEffect(() => {
+    setSelectedImage(product?.imageUrls?.[0] || (product as any)?.image || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600');
+    setSelectedSize(product.size);
+  }, [product]);
 
   const isWishlisted = wishlist.includes(product.id);
   const related = products.filter(p => p.category === product.category && p.id !== product.id).slice(0, 3);
@@ -68,7 +74,7 @@ export default function ProductDetailView({
           </div>
 
           {/* Multiple thumbnails */}
-          {product.imageUrls.length > 1 && (
+          {Array.isArray(product.imageUrls) && product.imageUrls.length > 1 && (
             <div className="flex gap-2.5">
               {product.imageUrls.map((img, idx) => (
                 <button
@@ -282,7 +288,7 @@ export default function ProductDetailView({
           <div className="grid sm:grid-cols-3 gap-6">
             {related.map((p) => (
               <div key={p.id} className="bg-white/10 border border-white/15 rounded-2xl p-3 flex gap-3.5 items-center hover:border-[#16A34A] hover:shadow-2xl transition group text-white">
-                <img src={p.imageUrls[0]} alt="" className="h-16 w-16 object-cover rounded-xl shrink-0 cursor-pointer" onClick={() => onQuickView(p)} />
+                <img src={p.imageUrls?.[0] || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600'} alt="" className="h-16 w-16 object-cover rounded-xl shrink-0 cursor-pointer" onClick={() => onQuickView(p)} />
                 <div className="flex-1 min-w-0">
                   <h4 className="text-xs font-bold text-white group-hover:text-[#FACC15] transition truncate cursor-pointer" onClick={() => onQuickView(p)}>
                     {p.name}

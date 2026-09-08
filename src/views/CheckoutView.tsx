@@ -329,7 +329,7 @@ export default function CheckoutView({
             {cart.map((item) => (
               <div key={item.product.id} className="flex gap-2.5 items-center justify-between text-xs">
                 <div className="flex gap-2 items-center min-w-0">
-                  <img src={item.product.imageUrls[0]} alt="" className="h-8 w-8 object-cover rounded-lg shrink-0" />
+                  <img src={item.product.imageUrls?.[0] || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600'} alt="" className="h-8 w-8 object-cover rounded-lg shrink-0" />
                   <div className="min-w-0">
                     <p className="font-bold text-white truncate leading-tight">{item.product.name}</p>
                     <p className="text-[9px] text-white/50">{item.quantity}x • {item.selectedSize}</p>

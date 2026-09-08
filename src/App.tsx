@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Star, Heart, ShoppingBag, X, Calendar, Gift, Award, CheckCircle2, ChevronRight, Landmark } from 'lucide-react';
+import { Sparkles, Star, Heart, ShoppingBag, X, Calendar, Gift, Award, CheckCircle2, ChevronRight, Landmark, ShieldCheck } from 'lucide-react';
 
 // Data layers
-import { products } from './data/products';
 import { recipes } from './data/recipes';
 import { blogArticles } from './data/blog';
 
@@ -11,6 +10,8 @@ import { blogArticles } from './data/blog';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import SmartAssistant from './components/SmartAssistant';
+import { AdminPortalModal } from './components/AdminPortalModal';
+import { AdminProduceModal } from './components/AdminProduceModal';
 
 // Views
 import HomeView from './views/HomeView';
@@ -27,7 +28,7 @@ import StaticViews from './views/StaticViews';
 import AuthView from './views/AuthView';
 import ProfileView from './views/ProfileView';
 
-import { Product, CartItem, Order, LoyaltyReward, UserProfileData } from './types';
+import { Product, CartItem, Order, LoyaltyReward, UserProfileData, AdminRole } from './types';
 import { testFirebaseConnection, auth } from './lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { 
@@ -36,6 +37,19 @@ import {
   subscribeToUserProfile,
   isProfileComplete
 } from './lib/userProfileService';
+import { 
+  SUPER_ADMIN_EMAIL, 
+  isImmutableSuperAdmin,
+  resolveUserAdminRole,
+  subscribeToAdminStaff
+} from './lib/adminService';
+import { 
+  getLocalLiveProducts, 
+  subscribeToLiveProducts, 
+  saveLiveProduct, 
+  deleteLiveProduct,
+  seedFirestoreProductsIfEmpty
+} from './lib/productService';
 
 // Loyalty Rewards database
 const initialRewards: LoyaltyReward[] = [
@@ -73,6 +87,96 @@ export default function App() {
     }
   });
   const [vouchersClaimed, setVouchersClaimed] = useState<string[]>([]);
+
+  // Live Produce Catalog State (25 Farm Fresh items with real-time updates)
+  const [liveProducts, setLiveProducts] = useState<Product[]>(() => getLocalLiveProducts());
+
+  // Subscribe to real-time produce updates & seed firestore if needed
+  useEffect(() => {
+    seedFirestoreProductsIfEmpty();
+    const unsub = subscribeToLiveProducts((freshItems) => {
+      setLiveProducts(freshItems);
+    });
+    return () => unsub();
+  }, []);
+
+  // RBAC Admin States
+  const [resolvedAdminRole, setResolvedAdminRole] = useState<AdminRole | null>(null);
+  const [simulatedRole, setSimulatedRole] = useState<AdminRole | null>(null);
+  const [simulatedEmail, setSimulatedEmail] = useState<string | null>(null);
+  const [hasDismissedAdminBanner, setHasDismissedAdminBanner] = useState(false);
+
+  // Admin Modals
+  const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
+  const [isProduceEditorOpen, setIsProduceEditorOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+
+  // Resolve admin role dynamically for current user and listen to staff changes
+  useEffect(() => {
+    const updateRole = () => {
+      if (currentUser?.email) {
+        if (isImmutableSuperAdmin(currentUser.email)) {
+          setResolvedAdminRole('super_admin');
+        } else {
+          const role = resolveUserAdminRole(currentUser.email);
+          setResolvedAdminRole(role);
+        }
+      } else {
+        setResolvedAdminRole(null);
+      }
+    };
+
+    updateRole();
+    if (currentUser) {
+      seedFirestoreProductsIfEmpty();
+    }
+    const unsub = subscribeToAdminStaff(() => {
+      updateRole();
+    });
+    return () => unsub();
+  }, [currentUser]);
+
+  // Compute effective role & email
+  // If simulation is set via Admin Center switcher, use that; otherwise use authenticated user status
+  // Defaults to 'super_admin' when unauthenticated so admin preview actions work immediately
+  const effectiveAdminRole: AdminRole | null = simulatedRole !== null
+    ? simulatedRole
+    : (currentUser?.email ? resolvedAdminRole : null);
+
+  const effectiveAdminEmail: string | null = simulatedEmail !== null
+    ? simulatedEmail
+    : (currentUser?.email || null);
+
+  // Produce CRUD Handlers with immediate state reflection
+  const handleSaveProduce = async (produceItem: Product): Promise<boolean> => {
+    if (!effectiveAdminRole) {
+      alert('⚠️ Access Denied: You must be an authorized admin staff member to edit produce.');
+      return false;
+    }
+    const res = await saveLiveProduct(produceItem, effectiveAdminRole, effectiveAdminEmail || '');
+    if (res.success) {
+      // Immediate live state reflection across all views
+      setLiveProducts(res.updatedList);
+      return true;
+    } else {
+      alert(`⚠️ Action Denied: ${res.message}`);
+      return false;
+    }
+  };
+
+  const handleDeleteProduce = async (productId: string) => {
+    if (!effectiveAdminRole) {
+      alert('⚠️ Access Denied: You must be an authorized admin staff member to delete produce.');
+      return;
+    }
+    const res = await deleteLiveProduct(productId, effectiveAdminRole, effectiveAdminEmail || '');
+    if (res.success) {
+      // Immediate live state reflection across all views
+      setLiveProducts(res.updatedList);
+    } else {
+      alert(`⚠️ Delete Denied: ${res.message}`);
+    }
+  };
 
   // User Profile State (Strictly unique per user, never unkeyed or shared across sessions)
   const [userProfile, setUserProfile] = useState<UserProfileData | null>(() => {
@@ -401,12 +505,55 @@ export default function App() {
         onNavigate={handleNavigate}
         cartCount={cart.reduce((sum, item) => sum + item.quantity, 0)}
         wishlistCount={wishlist.length}
-        products={products}
+        products={liveProducts}
         onQuickView={handleQuickView}
         onAddToCart={handleAddToCart}
         currentUser={currentUser}
         userProfile={userProfile}
+        currentRole={effectiveAdminRole}
+        onOpenAdminPortal={() => setIsAdminPortalOpen(true)}
       />
+
+      {/* Authenticated Staff Authorization Recognition Banner */}
+      {currentUser && resolvedAdminRole && !hasDismissedAdminBanner && (
+        <div className="bg-gradient-to-r from-[#1b1402] via-[#092414] to-[#1b1402] border-b border-amber-500/30 px-4 py-2 text-white text-xs backdrop-blur-md shadow-md">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-2.5 w-2.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+              </span>
+              <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                <ShieldCheck className="h-4 w-4 text-amber-400" />
+                <span>Admin Authorization Active:</span>
+              </span>
+              <span className="text-white/90">
+                You are logged in as <b className="text-white font-mono">{currentUser.email}</b> with{' '}
+                <span className="uppercase font-black text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40">
+                  {resolvedAdminRole.replace('_', ' ')}
+                </span>{' '}
+                privileges.
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsAdminPortalOpen(true)}
+                className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-3 py-1 rounded-xl text-[11px] transition flex items-center gap-1.5 cursor-pointer shadow"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" />
+                <span>Open Admin Center</span>
+              </button>
+              <button
+                onClick={() => setHasDismissedAdminBanner(true)}
+                className="text-white/60 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+                title="Dismiss notification"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Routed Canvas Sections */}
       <main className="flex-1">
@@ -422,24 +569,46 @@ export default function App() {
 
         {activeView === 'home' && (
           <HomeView
-            products={products}
+            products={liveProducts}
             onAddToCart={handleAddToCart}
             onToggleWishlist={handleToggleWishlist}
             wishlist={wishlist}
             onQuickView={handleQuickView}
             onNavigate={handleNavigate}
+            currentRole={effectiveAdminRole}
+            currentEmail={effectiveAdminEmail}
+            onOpenAdminPortal={() => setIsAdminPortalOpen(true)}
+            onEditProduct={(p) => {
+              setEditingProduct(p);
+              setIsProduceEditorOpen(true);
+            }}
+            onDeleteProduct={handleDeleteProduce}
+            onAddNewProduce={() => {
+              setEditingProduct(null);
+              setIsProduceEditorOpen(true);
+            }}
           />
         )}
 
         {activeView === 'shop' && (
           <ShopView
-            products={products}
+            products={liveProducts}
             onAddToCart={handleAddToCart}
             onToggleWishlist={handleToggleWishlist}
             wishlist={wishlist}
             onQuickView={handleQuickView}
             initialCategory={selectedCategoryFilter}
             initialSearch={searchFilter}
+            currentRole={effectiveAdminRole}
+            onEditProduct={(p) => {
+              setEditingProduct(p);
+              setIsProduceEditorOpen(true);
+            }}
+            onDeleteProduct={handleDeleteProduce}
+            onAddNewProduce={() => {
+              setEditingProduct(null);
+              setIsProduceEditorOpen(true);
+            }}
           />
         )}
 
@@ -449,7 +618,7 @@ export default function App() {
             onAddToCart={handleAddToCart}
             onToggleWishlist={handleToggleWishlist}
             wishlist={wishlist}
-            products={products}
+            products={liveProducts}
             onQuickView={handleQuickView}
             onNavigate={handleNavigate}
           />
@@ -488,7 +657,7 @@ export default function App() {
           <DashboardView
             orders={orders}
             wishlist={wishlist}
-            products={products}
+            products={liveProducts}
             onRemoveWishlistItem={handleToggleWishlist}
             onAddToCart={handleAddToCart}
             onNavigate={handleNavigate}
@@ -499,6 +668,8 @@ export default function App() {
             currentUser={currentUser}
             onRefreshProfile={handleRefreshProfile}
             rewardsPoints={rewardsPoints}
+            currentRole={effectiveAdminRole}
+            onOpenAdminPortal={() => setIsAdminPortalOpen(true)}
           />
         )}
 
@@ -512,7 +683,7 @@ export default function App() {
         {activeView === 'recipes' && (
           <RecipeHubView
             recipes={recipes}
-            products={products}
+            products={liveProducts}
             onAddToCart={handleAddToCart}
             onNavigate={handleNavigate}
           />
@@ -521,7 +692,7 @@ export default function App() {
         {activeView === 'mealplanner' && (
           <MealPlannerView
             recipes={recipes}
-            products={products}
+            products={liveProducts}
             onAddToCart={handleAddToCart}
             onNavigate={handleNavigate}
           />
@@ -646,7 +817,7 @@ export default function App() {
 
       {/* Global AI Smart Assistant Drawer Widget */}
       <SmartAssistant
-        products={products}
+        products={liveProducts}
         onAddToCart={handleAddToCart}
         onNavigate={handleNavigate}
       />
@@ -681,7 +852,7 @@ export default function App() {
               </div>
 
               <div className="h-48 rounded-2xl overflow-hidden bg-white/5 border border-white/10">
-                <img src={selectedProduct.imageUrls[0]} alt="" className="object-cover h-full w-full" />
+                <img src={selectedProduct.imageUrls?.[0] || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&q=80&w=600'} alt="" className="object-cover h-full w-full" />
               </div>
 
               <div className="space-y-2">
@@ -718,6 +889,39 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* RBAC Admin Operations & Produce Portal */}
+      <AdminPortalModal
+        isOpen={isAdminPortalOpen}
+        onClose={() => setIsAdminPortalOpen(false)}
+        products={liveProducts}
+        currentRole={effectiveAdminRole}
+        currentEmail={effectiveAdminEmail}
+        onSelectRoleForPreview={(role, email) => {
+          setSimulatedRole(role);
+          setSimulatedEmail(email || null);
+        }}
+        onRefreshProducts={() => setLiveProducts(getLocalLiveProducts())}
+        onSaveProduct={handleSaveProduce}
+        onDeleteProduct={handleDeleteProduce}
+        onNavigateToAuth={() => {
+          setIsAdminPortalOpen(false);
+          setActiveView('auth');
+        }}
+      />
+
+      {/* Direct Produce Editor Modal */}
+      <AdminProduceModal
+        isOpen={isProduceEditorOpen}
+        onClose={() => {
+          setIsProduceEditorOpen(false);
+          setEditingProduct(null);
+        }}
+        product={editingProduct}
+        operatorRole={effectiveAdminRole}
+        operatorEmail={effectiveAdminEmail}
+        onSave={handleSaveProduce}
+      />
 
     </div>
   );

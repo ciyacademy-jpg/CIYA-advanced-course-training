@@ -1,0 +1,11 @@
+[
+  {
+    "id": "ciyacademy_gmail_com",
+    "email": "ciyacademy@gmail.com",
+    "name": "Super Administrator",
+    "role": "super_admin",
+    "addedBy": "Root",
+    "addedAt": "2026-01-01T00:00:00.000Z",
+    "isImmutable": true
+  }
+]

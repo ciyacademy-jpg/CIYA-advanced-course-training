@@ -20,16 +20,23 @@ interface PlannedMeal {
 const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export default function MealPlannerView({
-  recipes,
-  products,
+  recipes = [],
+  products = [],
   onAddToCart,
   onNavigate
 }: MealPlannerViewProps) {
   const [selectedDay, setSelectedDay] = useState("Monday");
-  const [plannedMeals, setPlannedMeals] = useState<PlannedMeal[]>([
-    { id: "p1", day: "Monday", slot: "Lunch", recipe: recipes[0] },
-    { id: "p2", day: "Tuesday", slot: "Dinner", recipe: recipes[1] }
-  ]);
+  const [plannedMeals, setPlannedMeals] = useState<PlannedMeal[]>(() => {
+    const safeRecipes = Array.isArray(recipes) ? recipes : [];
+    const initial: PlannedMeal[] = [];
+    if (safeRecipes[0]) {
+      initial.push({ id: "p1", day: "Monday", slot: "Lunch", recipe: safeRecipes[0] });
+    }
+    if (safeRecipes[1]) {
+      initial.push({ id: "p2", day: "Tuesday", slot: "Dinner", recipe: safeRecipes[1] });
+    }
+    return initial;
+  });
   const [showAddMenu, setShowAddMenu] = useState<{ day: string; slot: 'Breakfast' | 'Lunch' | 'Dinner' } | null>(null);
 
   // Math calculated nutrition summary
@@ -40,6 +47,7 @@ export default function MealPlannerView({
     let fat = 0;
 
     plannedMeals.forEach((m) => {
+      if (!m || !m.recipe) return;
       // Split nutrition fact strings e.g., "45g" -> 45
       const pFact = parseFloat(m.recipe.nutritionFacts?.protein || "0");
       const cFact = parseFloat(m.recipe.nutritionFacts?.carbs || "0");
@@ -207,12 +215,12 @@ export default function MealPlannerView({
                     {items.map((it) => (
                       <div key={it.id} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
                         <div className="flex items-center gap-3.5 w-full sm:w-auto">
-                          <img src={it.recipe.imageUrl} alt="" className="h-14 w-14 object-cover rounded-xl shrink-0" />
+                          <img src={it.recipe?.imageUrl || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=400'} alt="" className="h-14 w-14 object-cover rounded-xl shrink-0" />
                           <div>
-                            <h5 className="text-xs font-bold text-white leading-snug">{it.recipe.name}</h5>
+                            <h5 className="text-xs font-bold text-white leading-snug">{it.recipe?.name || 'Assigned Meal'}</h5>
                             <div className="flex gap-3 text-[10px] text-white/50 font-semibold mt-1">
-                              <span>🔥 {it.recipe.calories} kcal</span>
-                              <span>⏱️ {it.recipe.cookingTime}</span>
+                              <span>🔥 {it.recipe?.calories || 0} kcal</span>
+                              <span>⏱️ {it.recipe?.cookingTime || '30 mins'}</span>
                             </div>
                           </div>
                         </div>
