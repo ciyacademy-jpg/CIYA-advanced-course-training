@@ -410,9 +410,12 @@ export async function deleteAdminStaff(
 }
 
 /**
- * Resolves the admin role for an authenticated user
+ * Resolves the admin role for an authenticated user synchronously from local state or supplied list
  */
-export function resolveUserAdminRole(userEmail: string | null | undefined): AdminRole | null {
+export function resolveUserAdminRole(
+  userEmail: string | null | undefined, 
+  staffList?: AdminUser[]
+): AdminRole | null {
   if (!userEmail) return null;
   const clean = userEmail.trim().toLowerCase();
 
@@ -421,7 +424,36 @@ export function resolveUserAdminRole(userEmail: string | null | undefined): Admi
     return 'super_admin';
   }
 
-  const list = getLocalAdmins();
-  const match = list.find(a => a.email.toLowerCase() === clean);
+  const list = staffList || getLocalAdmins();
+  const match = list.find(a => a.email && a.email.trim().toLowerCase() === clean);
   return match ? match.role : null;
+}
+
+/**
+ * Resolves admin role asynchronously, fetching from Central Server if not cached locally
+ */
+export async function resolveUserAdminRoleAsync(userEmail: string | null | undefined): Promise<AdminRole | null> {
+  if (!userEmail) return null;
+  const clean = userEmail.trim().toLowerCase();
+
+  if (isImmutableSuperAdmin(clean)) {
+    return 'super_admin';
+  }
+
+  // 1. Check local cache first
+  const localMatch = resolveUserAdminRole(clean);
+  if (localMatch) return localMatch;
+
+  // 2. Fetch fresh staff list from server
+  try {
+    const fresh = await fetchAdminStaffFromServer();
+    if (Array.isArray(fresh)) {
+      const match = fresh.find(a => a.email && a.email.trim().toLowerCase() === clean);
+      if (match) return match.role;
+    }
+  } catch (e) {
+    console.warn('resolveUserAdminRoleAsync server lookup notice:', e);
+  }
+
+  return null;
 }

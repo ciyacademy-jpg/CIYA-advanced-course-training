@@ -22,7 +22,13 @@ import {
   Cloud,
   Database,
   Copy,
-  ExternalLink
+  ExternalLink,
+  Share2,
+  FileText,
+  CheckCheck,
+  TrendingUp,
+  Calendar,
+  Send
 } from 'lucide-react';
 import { Product, AdminRole, AdminUser } from '../types';
 import { 
@@ -64,13 +70,22 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
   onDeleteProduct,
   onNavigateToAuth
 }) => {
-  const [activeTab, setActiveTab] = useState<'inventory' | 'staff' | 'roleswitcher'>('inventory');
+  const [activeTab, setActiveTab] = useState<'inventory' | 'supervisor_hub' | 'sales_hub' | 'staff' | 'roleswitcher'>('inventory');
   const [adminStaffList, setAdminStaffList] = useState<AdminUser[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All Harvest');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  // Supervisor Quality Hub State
+  const [supervisorFilter, setSupervisorFilter] = useState<'all' | 'spoilage_risk' | 'low_stock' | 'organic'>('all');
+  const [approvedBatches, setApprovedBatches] = useState<Record<string, boolean>>({});
+
+  // Sales Rep Hub State
+  const [selectedQuoteProductIds, setSelectedQuoteProductIds] = useState<string[]>([]);
+  const [copiedQuoteMessage, setCopiedQuoteMessage] = useState(false);
+  const [wholesaleClientName, setWholesaleClientName] = useState('');
 
   // New admin form state (Super Admin only)
   const [newAdminEmail, setNewAdminEmail] = useState('');
@@ -89,12 +104,12 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
 
   const permissions = getAdminPermissions(currentRole);
 
-  // Guard activeTab: non-super-admins can only access inventory
+  // Guard activeTab: ensure staff tab requires canManageAdmins
   useEffect(() => {
-    if (currentRole !== 'super_admin' && activeTab !== 'inventory') {
+    if (activeTab === 'staff' && !permissions.canManageAdmins) {
       setActiveTab('inventory');
     }
-  }, [currentRole, activeTab]);
+  }, [activeTab, permissions.canManageAdmins]);
 
   useEffect(() => {
     if (isOpen) {
@@ -425,11 +440,39 @@ service cloud.firestore {
           </div>
         </div>
 
+        {/* Live Simulation / Role Preview Alert Strip */}
+        {onSelectRoleForPreview && currentRole !== 'super_admin' && (
+          <div className="bg-gradient-to-r from-purple-950/80 via-stone-900 to-purple-950/80 border-b border-purple-500/30 px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2 text-purple-200">
+              <ShieldCheck className="h-4 w-4 text-purple-400 shrink-0" />
+              <span>
+                Operating in <b className="text-white uppercase font-black px-1.5 py-0.5 rounded bg-purple-500/30 border border-purple-400/40">{currentRole.replace('_', ' ')}</b> preview mode.
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setActiveTab('roleswitcher')}
+                className="text-xs bg-white/10 hover:bg-white/20 text-white font-bold px-3 py-1 rounded-lg transition cursor-pointer flex items-center gap-1.5 border border-white/20"
+              >
+                <Sliders className="h-3.5 w-3.5 text-purple-300" />
+                <span>Switch Role</span>
+              </button>
+              <button
+                onClick={() => onSelectRoleForPreview('super_admin', SUPER_ADMIN_EMAIL)}
+                className="text-xs bg-amber-500 hover:bg-amber-400 text-black font-bold px-3 py-1 rounded-lg transition cursor-pointer flex items-center gap-1.5 shadow"
+              >
+                <Crown className="h-3.5 w-3.5" />
+                <span>Reset to Super Admin</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Navigation Tabs */}
-        <div className="flex border-b border-white/10 bg-black/40 px-6 gap-2">
+        <div className="flex border-b border-white/10 bg-black/40 px-6 gap-2 overflow-x-auto">
           <button
             onClick={() => setActiveTab('inventory')}
-            className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer ${
+            className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer whitespace-nowrap ${
               activeTab === 'inventory'
                 ? 'border-emerald-500 text-emerald-400 bg-white/5'
                 : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
@@ -439,13 +482,43 @@ service cloud.firestore {
             <span>Farm Produce Catalog ({products.length})</span>
           </button>
 
-          {/* Admin Staff Directory: Strictly Super Admin Only */}
+          {/* Quality & Freshness Supervision Hub */}
+          {(currentRole === 'supervisor' || currentRole === 'manager' || currentRole === 'super_admin') && (
+            <button
+              onClick={() => setActiveTab('supervisor_hub')}
+              className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer whitespace-nowrap ${
+                activeTab === 'supervisor_hub'
+                  ? 'border-purple-500 text-purple-300 bg-purple-500/10'
+                  : 'border-transparent text-purple-300/70 hover:text-purple-200 hover:bg-purple-500/5'
+              }`}
+            >
+              <ShieldCheck className="h-4 w-4 text-purple-400" />
+              <span>Quality Supervision Hub</span>
+            </button>
+          )}
+
+          {/* Sales & Wholesale Pricing Hub */}
+          {(currentRole === 'sales_rep' || currentRole === 'manager' || currentRole === 'super_admin') && (
+            <button
+              onClick={() => setActiveTab('sales_hub')}
+              className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer whitespace-nowrap ${
+                activeTab === 'sales_hub'
+                  ? 'border-emerald-500 text-emerald-300 bg-emerald-500/10'
+                  : 'border-transparent text-emerald-300/70 hover:text-emerald-200 hover:bg-emerald-500/5'
+              }`}
+            >
+              <TrendingUp className="h-4 w-4 text-emerald-400" />
+              <span>Sales & Wholesale Hub</span>
+            </button>
+          )}
+
+          {/* Admin Staff Directory: Super Admin / Staff Managers */}
           {permissions.canManageAdmins && (
             <button
               onClick={() => setActiveTab('staff')}
-              className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer ${
+              className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer whitespace-nowrap ${
                 activeTab === 'staff'
-                  ? 'border-emerald-500 text-emerald-400 bg-white/5'
+                  ? 'border-amber-500 text-amber-400 bg-amber-500/10'
                   : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
               }`}
             >
@@ -454,18 +527,18 @@ service cloud.firestore {
             </button>
           )}
 
-          {/* Role Switcher: Strictly Super Admin Only */}
-          {currentRole === 'super_admin' && onSelectRoleForPreview && (
+          {/* Role Switcher: Accessible for previewing */}
+          {onSelectRoleForPreview && (
             <button
               onClick={() => setActiveTab('roleswitcher')}
-              className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer ${
+              className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer whitespace-nowrap ${
                 activeTab === 'roleswitcher'
                   ? 'border-amber-500 text-amber-400 bg-amber-500/10'
                   : 'border-transparent text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/5'
               }`}
             >
               <Sliders className="h-4 w-4" />
-              <span>Role Switcher (Super Admin Preview)</span>
+              <span>Role Switcher (Live Preview)</span>
             </button>
           )}
         </div>
@@ -748,6 +821,421 @@ service cloud.firestore {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Quality & Freshness Supervision Hub */}
+        {activeTab === 'supervisor_hub' && (
+          <div className="flex-1 overflow-y-auto p-6 flex flex-col space-y-6">
+            {/* Header Description */}
+            <div className="bg-gradient-to-r from-purple-950/70 via-stone-900 to-purple-950/70 border border-purple-500/30 rounded-2xl p-5 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 flex-shrink-0">
+                    <ShieldCheck className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>Harvest Quality Control & Spoilage Purge Hub</span>
+                      <span className="text-[10px] bg-purple-500/20 text-purple-300 font-black uppercase px-2 py-0.5 rounded border border-purple-500/30">
+                        Supervisor Tier
+                      </span>
+                    </h3>
+                    <p className="text-xs text-white/70 mt-0.5">
+                      Monitor live produce freshness scores, track harvest shelf-life expiration dates, and discard spoiled or damaged inventory before customer delivery.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={onRefreshProducts}
+                  className="bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer self-start sm:self-auto border border-white/10"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 text-purple-400" />
+                  <span>Refresh Batches</span>
+                </button>
+              </div>
+
+              {/* Supervision KPI Stats Strip */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                <div className="bg-black/30 border border-white/10 rounded-xl p-3">
+                  <p className="text-[11px] text-white/50 font-medium">Monitored Items</p>
+                  <p className="text-lg font-black text-white">{products.length}</p>
+                </div>
+                <div className="bg-black/30 border border-white/10 rounded-xl p-3">
+                  <p className="text-[11px] text-emerald-400 font-medium">Prime Freshness (≥95%)</p>
+                  <p className="text-lg font-black text-emerald-300">
+                    {products.filter(p => (p.freshnessScore || 95) >= 95).length}
+                  </p>
+                </div>
+                <div className="bg-black/30 border border-amber-500/20 rounded-xl p-3">
+                  <p className="text-[11px] text-amber-400 font-medium">Attention Needed (&lt;95%)</p>
+                  <p className="text-lg font-black text-amber-300">
+                    {products.filter(p => (p.freshnessScore || 95) < 95).length}
+                  </p>
+                </div>
+                <div className="bg-black/30 border border-red-500/20 rounded-xl p-3">
+                  <p className="text-[11px] text-red-400 font-medium">Low Stock Batches (≤5)</p>
+                  <p className="text-lg font-black text-red-300">
+                    {products.filter(p => p.stock <= 5).length}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setSupervisorFilter('all')}
+                className={`text-xs px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                  supervisorFilter === 'all'
+                    ? 'bg-purple-600 text-white shadow'
+                    : 'bg-white/5 hover:bg-white/10 text-white/70 border border-white/10'
+                }`}
+              >
+                All Produce ({products.length})
+              </button>
+              <button
+                onClick={() => setSupervisorFilter('spoilage_risk')}
+                className={`text-xs px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  supervisorFilter === 'spoilage_risk'
+                    ? 'bg-amber-600 text-white shadow'
+                    : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                }`}
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+                <span>Freshness Alert (&lt;95%)</span>
+              </button>
+              <button
+                onClick={() => setSupervisorFilter('low_stock')}
+                className={`text-xs px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  supervisorFilter === 'low_stock'
+                    ? 'bg-red-600 text-white shadow'
+                    : 'bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30'
+                }`}
+              >
+                <Package className="h-3.5 w-3.5" />
+                <span>Critical Stock (≤5)</span>
+              </button>
+              <button
+                onClick={() => setSupervisorFilter('organic')}
+                className={`text-xs px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  supervisorFilter === 'organic'
+                    ? 'bg-emerald-600 text-white shadow'
+                    : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                }`}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>Certified Organic</span>
+              </button>
+            </div>
+
+            {/* Produce Quality Inspection Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {products
+                .filter(p => {
+                  if (supervisorFilter === 'spoilage_risk') return (p.freshnessScore || 95) < 95;
+                  if (supervisorFilter === 'low_stock') return p.stock <= 5;
+                  if (supervisorFilter === 'organic') return Boolean(p.isOrganic);
+                  return true;
+                })
+                .map(prod => {
+                  const freshness = prod.freshnessScore || 95;
+                  const isApproved = approvedBatches[prod.id];
+                  const isCritical = prod.stock <= 5;
+
+                  return (
+                    <div
+                      key={prod.id}
+                      className={`p-4 rounded-2xl border transition flex flex-col justify-between space-y-3 ${
+                        freshness < 90
+                          ? 'bg-red-950/20 border-red-500/40'
+                          : freshness < 95
+                          ? 'bg-amber-950/20 border-amber-500/30'
+                          : 'bg-white/5 border-white/10 hover:border-white/20'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={prod.image}
+                            alt={prod.name}
+                            className="w-14 h-14 rounded-xl object-cover bg-stone-900 border border-white/10"
+                          />
+                          <div>
+                            <span className="text-[10px] text-white/50 uppercase font-mono">{prod.category}</span>
+                            <h4 className="text-sm font-bold text-white line-clamp-1">{prod.name}</h4>
+                            <p className="text-xs text-emerald-400 font-mono font-bold">₦{prod.price.toLocaleString()} / {prod.unit}</p>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded border inline-block ${
+                            isCritical ? 'bg-red-500/20 text-red-300 border-red-500/40' : 'bg-white/10 text-white/80 border-white/15'
+                          }`}>
+                            {prod.stock} in stock
+                          </span>
+                          {prod.isOrganic && (
+                            <span className="block text-[9px] text-emerald-300 font-bold mt-1">🌱 100% Organic</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Freshness Bar */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-white/60 font-medium flex items-center gap-1">
+                            Freshness Index:
+                          </span>
+                          <span className={`font-black font-mono ${
+                            freshness >= 95 ? 'text-emerald-400' : freshness >= 90 ? 'text-amber-400' : 'text-red-400'
+                          }`}>
+                            {freshness}% {freshness >= 95 ? '(Grade A Fresh)' : freshness >= 90 ? '(Fair)' : '(Inspect)'}
+                          </span>
+                        </div>
+                        <div className="w-full bg-stone-800 h-2 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              freshness >= 95 ? 'bg-emerald-500' : freshness >= 90 ? 'bg-amber-500' : 'bg-red-500'
+                            }`}
+                            style={{ width: `${freshness}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Dates & Supervision Tags */}
+                      <div className="text-[11px] text-white/60 flex items-center justify-between border-t border-white/10 pt-2 font-mono">
+                        <span>Harvest: {prod.harvestDate || 'Fresh Today'}</span>
+                        <span>Expires: {prod.expiryDate || '5 Days Remaining'}</span>
+                      </div>
+
+                      {/* Supervisor Action Buttons */}
+                      <div className="flex items-center justify-between gap-2 pt-1">
+                        <button
+                          onClick={() => setApprovedBatches(prev => ({ ...prev, [prod.id]: !prev[prod.id] }))}
+                          className={`text-xs px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                            isApproved
+                              ? 'bg-emerald-600 text-white shadow'
+                              : 'bg-white/10 hover:bg-white/20 text-white/90 border border-white/15'
+                          }`}
+                        >
+                          <Check className="h-3.5 w-3.5 text-emerald-300" />
+                          <span>{isApproved ? 'Quality Certified ✓' : 'Approve Batch'}</span>
+                        </button>
+
+                        {/* Purge / Discard Produce (Supervisor is authorized to delete) */}
+                        {deleteConfirmId === prod.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleDeleteProduce(prod.id)}
+                              className="bg-red-600 hover:bg-red-500 text-white px-2.5 py-1 rounded-xl text-xs font-bold transition cursor-pointer"
+                            >
+                              Confirm Discard
+                            </button>
+                            <button
+                              onClick={() => setDeleteConfirmId(null)}
+                              className="text-white/60 hover:text-white px-2 py-1 text-xs cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setDeleteConfirmId(prod.id)}
+                            className="bg-red-500/15 hover:bg-red-500/30 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                            title="Discard / Purge Spoiled Batch"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>Discard Spoiled</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Sales Operations & Wholesale Pricing Hub */}
+        {activeTab === 'sales_hub' && (
+          <div className="flex-1 overflow-y-auto p-6 flex flex-col space-y-6">
+            {/* Sales Rep Top Banner */}
+            <div className="bg-gradient-to-r from-emerald-950/70 via-stone-900 to-emerald-950/70 border border-emerald-500/30 rounded-2xl p-5 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-300 flex-shrink-0">
+                    <TrendingUp className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>Sales Operations & Wholesale Quotation Hub</span>
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-black uppercase px-2 py-0.5 rounded border border-emerald-500/30">
+                        Sales Rep Tier
+                      </span>
+                    </h3>
+                    <p className="text-xs text-white/70 mt-0.5">
+                      Instant visibility into warehouse stock levels, wholesale bulk pricing matrices, and 1-click quotation generation for commercial buyers.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-emerald-900/40 border border-emerald-500/30 px-3 py-1.5 rounded-xl text-xs text-emerald-300 font-bold self-start sm:self-auto">
+                  Standard Wholesale Discount: 15% OFF
+                </div>
+              </div>
+
+              {/* Wholesale Quotation Builder Bar */}
+              <div className="bg-black/40 border border-white/10 rounded-xl p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex-1">
+                    <label className="block text-[11px] text-white/60 mb-1 font-medium">Customer / Business Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Lagos Continental Hotel or Chef Amaka"
+                      value={wholesaleClientName}
+                      onChange={e => setWholesaleClientName(e.target.value)}
+                      className="w-full bg-stone-800 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder-white/40 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <button
+                      onClick={() => {
+                        const selectedItems = products.filter(p => selectedQuoteProductIds.includes(p.id));
+                        if (selectedItems.length === 0) {
+                          alert('Please select at least one produce item using the checkboxes below.');
+                          return;
+                        }
+
+                        const client = wholesaleClientName.trim() || 'Valued Buyer';
+                        let msg = `🛒 *FRESHBASKET NIGERIA — OFFICIAL WHOLESALE QUOTATION*\n`;
+                        msg += `Client: ${client}\n`;
+                        msg += `Date: ${new Date().toLocaleDateString('en-GB')}\n`;
+                        msg += `Status: Available in Cold-Chain Warehouse\n\n`;
+                        msg += `*Selected Produce Items:*\n`;
+
+                        let totalRetail = 0;
+                        selectedItems.forEach((item, idx) => {
+                          const wholesalePrice = Math.round(item.price * 0.85);
+                          totalRetail += item.price;
+                          msg += `${idx + 1}. ${item.name} (${item.unit})\n`;
+                          msg += `   - Retail: ₦${item.price.toLocaleString()}\n`;
+                          msg += `   - Wholesale Rate (15% Bulk): ₦${wholesalePrice.toLocaleString()}\n`;
+                          msg += `   - Available Stock: ${item.stock} ${item.unit}\n`;
+                        });
+
+                        const totalWholesale = Math.round(totalRetail * 0.85);
+                        msg += `\n*Financial Summary:*\n`;
+                        msg += `Total Catalog Price: ₦${totalRetail.toLocaleString()}\n`;
+                        msg += `Wholesale Savings: ₦${(totalRetail - totalWholesale).toLocaleString()}\n`;
+                        msg += `*Final Invoice Total: ₦${totalWholesale.toLocaleString()}*\n\n`;
+                        msg += `Direct farm delivery available within 2-4 hours across Lagos.\nTo confirm dispatch, reply to this message.`;
+
+                        navigator.clipboard.writeText(msg);
+                        setCopiedQuoteMessage(true);
+                        setTimeout(() => setCopiedQuoteMessage(false), 3500);
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow"
+                    >
+                      {copiedQuoteMessage ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                      <span>{copiedQuoteMessage ? 'Quotation Copied!' : 'Copy WhatsApp / Email Quote'}</span>
+                    </button>
+
+                    {selectedQuoteProductIds.length > 0 && (
+                      <button
+                        onClick={() => setSelectedQuoteProductIds([])}
+                        className="text-xs text-white/60 hover:text-white px-2 py-2"
+                      >
+                        Clear Selection
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-white/70 border-t border-white/10 pt-2">
+                  <span>Selected Produce: <b>{selectedQuoteProductIds.length} items</b></span>
+                  <span>
+                    Wholesale Total:{' '}
+                    <b className="text-emerald-300 font-mono text-sm">
+                      ₦{Math.round(
+                        products
+                          .filter(p => selectedQuoteProductIds.includes(p.id))
+                          .reduce((sum, p) => sum + p.price, 0) * 0.85
+                      ).toLocaleString()}
+                    </b>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Produce Price & Availability Matrix */}
+            <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+              <div className="p-4 border-b border-white/10 flex items-center justify-between">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Live Produce Inventory & Wholesale Rate Matrix ({products.length})
+                </h4>
+                <span className="text-[11px] text-white/50">Check boxes to add items to customer quote</span>
+              </div>
+
+              <div className="divide-y divide-white/10">
+                {products.map(prod => {
+                  const wholesalePrice = Math.round(prod.price * 0.85);
+                  const isSelected = selectedQuoteProductIds.includes(prod.id);
+
+                  return (
+                    <div
+                      key={prod.id}
+                      onClick={() => {
+                        setSelectedQuoteProductIds(prev =>
+                          isSelected ? prev.filter(id => id !== prod.id) : [...prev, prod.id]
+                        );
+                      }}
+                      className={`p-3.5 sm:p-4 flex items-center justify-between gap-3 cursor-pointer transition ${
+                        isSelected ? 'bg-emerald-950/40' : 'hover:bg-white/5'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          className="h-4 w-4 rounded text-emerald-600 focus:ring-emerald-500 border-white/20 bg-stone-800"
+                        />
+                        <img
+                          src={prod.image}
+                          alt={prod.name}
+                          className="w-12 h-12 rounded-xl object-cover bg-stone-900 border border-white/10"
+                        />
+                        <div>
+                          <p className="text-sm font-bold text-white">{prod.name}</p>
+                          <p className="text-[11px] text-white/50">{prod.category} • {prod.unit}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4 sm:gap-8 text-right">
+                        <div>
+                          <p className="text-[10px] text-white/40 uppercase">Retail Price</p>
+                          <p className="text-xs font-bold text-white/80 font-mono">₦{prod.price.toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-emerald-400 uppercase font-bold">Wholesale (-15%)</p>
+                          <p className="text-xs font-black text-emerald-300 font-mono">₦{wholesalePrice.toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border inline-block ${
+                            prod.stock > 10 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' :
+                            prod.stock > 0 ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' :
+                            'bg-red-500/20 text-red-300 border-red-500/30'
+                          }`}>
+                            {prod.stock > 0 ? `${prod.stock} In Stock` : 'Sold Out'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}

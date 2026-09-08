@@ -28,7 +28,7 @@ import StaticViews from './views/StaticViews';
 import AuthView from './views/AuthView';
 import ProfileView from './views/ProfileView';
 
-import { Product, CartItem, Order, LoyaltyReward, UserProfileData, AdminRole } from './types';
+import { Product, CartItem, Order, LoyaltyReward, UserProfileData, AdminRole, AdminUser } from './types';
 import { testFirebaseConnection, auth } from './lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { 
@@ -41,6 +41,7 @@ import {
   SUPER_ADMIN_EMAIL, 
   isImmutableSuperAdmin,
   resolveUserAdminRole,
+  resolveUserAdminRoleAsync,
   subscribeToAdminStaff
 } from './lib/adminService';
 import { 
@@ -113,27 +114,46 @@ export default function App() {
 
   // Resolve admin role dynamically for current user and listen to staff changes
   useEffect(() => {
-    const updateRole = () => {
-      if (currentUser?.email) {
-        if (isImmutableSuperAdmin(currentUser.email)) {
-          setResolvedAdminRole('super_admin');
-        } else {
-          const role = resolveUserAdminRole(currentUser.email);
-          setResolvedAdminRole(role);
-        }
-      } else {
+    let isMounted = true;
+
+    const syncRole = (staffList?: AdminUser[]) => {
+      if (!currentUser?.email) {
         setResolvedAdminRole(null);
+        return;
+      }
+      const email = currentUser.email.trim().toLowerCase();
+      if (isImmutableSuperAdmin(email)) {
+        setResolvedAdminRole('super_admin');
+        return;
+      }
+
+      // Check synchronous cache / supplied staff list first
+      const role = resolveUserAdminRole(email, staffList);
+      if (role) {
+        setResolvedAdminRole(role);
+      } else {
+        // Asynchronously check Central Server in case client local storage was cold
+        resolveUserAdminRoleAsync(email).then(freshRole => {
+          if (isMounted && freshRole) {
+            setResolvedAdminRole(freshRole);
+          }
+        });
       }
     };
 
-    updateRole();
+    syncRole();
     if (currentUser) {
       seedFirestoreProductsIfEmpty();
     }
-    const unsub = subscribeToAdminStaff(() => {
-      updateRole();
+    const unsub = subscribeToAdminStaff((freshStaff) => {
+      if (isMounted) {
+        syncRole(freshStaff);
+      }
     });
-    return () => unsub();
+    return () => {
+      isMounted = false;
+      unsub();
+    };
   }, [currentUser]);
 
   // Compute effective role & email
@@ -514,31 +534,74 @@ export default function App() {
         onOpenAdminPortal={() => setIsAdminPortalOpen(true)}
       />
 
-      {/* Authenticated Staff Authorization Recognition Banner */}
-      {currentUser && resolvedAdminRole && !hasDismissedAdminBanner && (
-        <div className="bg-gradient-to-r from-[#1b1402] via-[#092414] to-[#1b1402] border-b border-amber-500/30 px-4 py-2 text-white text-xs backdrop-blur-md shadow-md">
+      {/* Authenticated Staff or Simulated Preview Authorization Recognition Banner */}
+      {effectiveAdminRole && !hasDismissedAdminBanner && (
+        <div className={`border-b px-4 py-2.5 text-white text-xs backdrop-blur-md shadow-md transition ${
+          effectiveAdminRole === 'super_admin' ? 'bg-gradient-to-r from-[#1b1402] via-[#092414] to-[#1b1402] border-amber-500/30' :
+          effectiveAdminRole === 'manager' ? 'bg-gradient-to-r from-[#071927] via-[#0c2b42] to-[#071927] border-blue-500/30' :
+          effectiveAdminRole === 'supervisor' ? 'bg-gradient-to-r from-[#1b0a29] via-[#2d1143] to-[#1b0a29] border-purple-500/30' :
+          'bg-gradient-to-r from-[#062414] via-[#0d3b22] to-[#062414] border-emerald-500/30'
+        }`}>
           <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
               <span className="flex h-2.5 w-2.5 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                  effectiveAdminRole === 'super_admin' ? 'bg-amber-400' :
+                  effectiveAdminRole === 'manager' ? 'bg-blue-400' :
+                  effectiveAdminRole === 'supervisor' ? 'bg-purple-400' : 'bg-emerald-400'
+                }`}></span>
+                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                  effectiveAdminRole === 'super_admin' ? 'bg-amber-500' :
+                  effectiveAdminRole === 'manager' ? 'bg-blue-500' :
+                  effectiveAdminRole === 'supervisor' ? 'bg-purple-500' : 'bg-emerald-500'
+                }`}></span>
               </span>
-              <span className="font-bold text-amber-300 flex items-center gap-1.5">
-                <ShieldCheck className="h-4 w-4 text-amber-400" />
-                <span>Admin Authorization Active:</span>
+              <span className="font-bold flex items-center gap-1.5 text-white">
+                <ShieldCheck className={`h-4 w-4 ${
+                  effectiveAdminRole === 'super_admin' ? 'text-amber-400' :
+                  effectiveAdminRole === 'manager' ? 'text-blue-400' :
+                  effectiveAdminRole === 'supervisor' ? 'text-purple-400' : 'text-emerald-400'
+                }`} />
+                <span>
+                  {simulatedRole ? 'Staff Role Preview Active:' : 'Admin Authorization Active:'}
+                </span>
               </span>
               <span className="text-white/90">
-                You are logged in as <b className="text-white font-mono">{currentUser.email}</b> with{' '}
-                <span className="uppercase font-black text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40">
-                  {resolvedAdminRole.replace('_', ' ')}
+                Operating with{' '}
+                <span className={`uppercase font-black px-2 py-0.5 rounded border text-[11px] ${
+                  effectiveAdminRole === 'super_admin' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' :
+                  effectiveAdminRole === 'manager' ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' :
+                  effectiveAdminRole === 'supervisor' ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' :
+                  'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                }`}>
+                  {effectiveAdminRole.replace('_', ' ')}
                 </span>{' '}
-                privileges.
+                privileges
+                {effectiveAdminEmail && (
+                  <> (Account: <b className="font-mono text-white/95">{effectiveAdminEmail}</b>)</>
+                )}
               </span>
             </div>
             <div className="flex items-center gap-2">
+              {simulatedRole && (
+                <button
+                  onClick={() => {
+                    setSimulatedRole(null);
+                    setSimulatedEmail(null);
+                  }}
+                  className="bg-white/10 hover:bg-white/20 text-white font-bold px-2.5 py-1 rounded-xl text-[11px] border border-white/20 transition cursor-pointer"
+                >
+                  Exit Preview
+                </button>
+              )}
               <button
                 onClick={() => setIsAdminPortalOpen(true)}
-                className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-3 py-1 rounded-xl text-[11px] transition flex items-center gap-1.5 cursor-pointer shadow"
+                className={`font-bold px-3.5 py-1.5 rounded-xl text-[11px] transition flex items-center gap-1.5 cursor-pointer shadow ${
+                  effectiveAdminRole === 'super_admin' ? 'bg-amber-500 hover:bg-amber-400 text-black' :
+                  effectiveAdminRole === 'manager' ? 'bg-blue-500 hover:bg-blue-400 text-white' :
+                  effectiveAdminRole === 'supervisor' ? 'bg-purple-500 hover:bg-purple-400 text-white' :
+                  'bg-emerald-500 hover:bg-emerald-400 text-black'
+                }`}
               >
                 <ShieldCheck className="h-3.5 w-3.5" />
                 <span>Open Admin Center</span>
@@ -600,6 +663,7 @@ export default function App() {
             initialCategory={selectedCategoryFilter}
             initialSearch={searchFilter}
             currentRole={effectiveAdminRole}
+            onOpenAdminPortal={() => setIsAdminPortalOpen(true)}
             onEditProduct={(p) => {
               setEditingProduct(p);
               setIsProduceEditorOpen(true);

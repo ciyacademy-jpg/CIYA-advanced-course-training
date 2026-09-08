@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { SlidersHorizontal, Grid, List, Search, Star, Heart, ShoppingBag, Eye, X, Check, RefreshCw, Plus, Edit3, Trash2 } from 'lucide-react';
+import { SlidersHorizontal, Grid, List, Search, Star, Heart, ShoppingBag, Eye, X, Check, RefreshCw, Plus, Edit3, Trash2, ShieldCheck } from 'lucide-react';
 import { Product, AdminRole } from '../types';
 import { getAdminPermissions } from '../lib/adminService';
 
@@ -13,6 +13,7 @@ interface ShopViewProps {
   initialCategory?: string;
   initialSearch?: string;
   currentRole?: AdminRole | null;
+  onOpenAdminPortal?: () => void;
   onEditProduct?: (product: Product) => void;
   onDeleteProduct?: (id: string) => Promise<void>;
   onAddNewProduce?: () => void;
@@ -27,6 +28,7 @@ export default function ShopView({
   initialCategory = "",
   initialSearch = "",
   currentRole,
+  onOpenAdminPortal,
   onEditProduct,
   onDeleteProduct,
   onAddNewProduce
@@ -132,6 +134,31 @@ export default function ShopView({
           <p className="text-xs text-white/70 leading-relaxed">
             Browse our carefully vetted list of fresh fruits, hand-sorted vegetables, stone-free rice grains, and essential kitchen ingredients. Sourced raw, delivered ripe.
           </p>
+
+          {currentRole && onOpenAdminPortal && (
+            <div className="pt-2 flex flex-wrap items-center gap-2">
+              <button
+                onClick={onOpenAdminPortal}
+                className="text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 px-3.5 py-2 rounded-xl border border-amber-500/40 flex items-center gap-2 transition cursor-pointer shadow"
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-amber-400" />
+                <span>Admin Operations Center</span>
+                <span className="text-[10px] uppercase font-black px-2 py-0.5 bg-amber-500/30 text-amber-200 rounded">
+                  {currentRole.replace('_', ' ')}
+                </span>
+              </button>
+
+              {permissions.canCreate && onAddNewProduce && (
+                <button
+                  onClick={onAddNewProduce}
+                  className="text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl shadow flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Add Produce</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
