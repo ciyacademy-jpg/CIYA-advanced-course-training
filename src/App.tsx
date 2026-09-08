@@ -961,6 +961,7 @@ export default function App() {
         products={liveProducts}
         currentRole={effectiveAdminRole}
         currentEmail={effectiveAdminEmail}
+        isSimulatingRole={simulatedRole !== null}
         onSelectRoleForPreview={(role, email) => {
           setSimulatedRole(role);
           setSimulatedEmail(email || null);

@@ -147,7 +147,8 @@ export async function fetchAdminStaffFromServer(): Promise<AdminUser[]> {
         'Pragma': 'no-cache'
       }
     });
-    if (res.ok) {
+    const contentType = res.headers.get('content-type') || '';
+    if (res.ok && contentType.includes('application/json')) {
       const data = await res.json();
       if (data && data.success && Array.isArray(data.admins) && data.admins.length > 0) {
         const filtered = data.admins.filter((a: AdminUser) => !isPlaceholderAdmin(a.email));
@@ -444,7 +445,28 @@ export async function resolveUserAdminRoleAsync(userEmail: string | null | undef
   const localMatch = resolveUserAdminRole(clean);
   if (localMatch) return localMatch;
 
-  // 2. Fetch fresh staff list from server
+  // 2. Direct Firestore document lookup (Crucial for static Firebase Hosting & multi-device sync)
+  try {
+    const id = sanitizeEmailToId(clean);
+    const docRef = doc(db, 'admins', id);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data() as AdminUser;
+      if (data && data.role) {
+        // Save to local cache so subsequent checks are instant
+        const localList = getLocalAdmins();
+        if (!localList.some(a => a.email.toLowerCase() === clean)) {
+          localList.push(data);
+          saveLocalAdmins(localList);
+        }
+        return data.role;
+      }
+    }
+  } catch (err) {
+    console.warn('Direct Firestore admin lookup notice:', err);
+  }
+
+  // 3. Fetch fresh staff list from server if in full-stack environment
   try {
     const fresh = await fetchAdminStaffFromServer();
     if (Array.isArray(fresh)) {

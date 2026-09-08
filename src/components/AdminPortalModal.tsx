@@ -51,6 +51,7 @@ interface AdminPortalModalProps {
   products: Product[];
   currentRole: AdminRole | null;
   currentEmail: string | null;
+  isSimulatingRole?: boolean;
   onSelectRoleForPreview?: (role: AdminRole | null, simulatedEmail?: string) => void;
   onRefreshProducts: () => void;
   onSaveProduct: (p: Product) => Promise<boolean | void> | boolean | void;
@@ -64,6 +65,7 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
   products,
   currentRole,
   currentEmail,
+  isSimulatingRole,
   onSelectRoleForPreview,
   onRefreshProducts,
   onSaveProduct,
@@ -96,20 +98,16 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [lastAppointedStaff, setLastAppointedStaff] = useState<{ email: string; name: string; role: AdminRole } | null>(null);
 
-  // Cloud Firestore manual sync & rules modal state
-  const [isSyncingFirestore, setIsSyncingFirestore] = useState(false);
-  const [firestoreSyncStatus, setFirestoreSyncStatus] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-  const [showRulesHelper, setShowRulesHelper] = useState(false);
-  const [copiedRules, setCopiedRules] = useState(false);
-
   const permissions = getAdminPermissions(currentRole);
 
-  // Guard activeTab: ensure staff tab requires canManageAdmins
+  // Guard activeTab: ONLY super admin can access staff directory or role switcher
   useEffect(() => {
-    if (activeTab === 'staff' && !permissions.canManageAdmins) {
-      setActiveTab('inventory');
+    if (currentRole !== 'super_admin') {
+      if (activeTab === 'staff' || activeTab === 'roleswitcher') {
+        setActiveTab('inventory');
+      }
     }
-  }, [activeTab, permissions.canManageAdmins]);
+  }, [currentRole, activeTab]);
 
   useEffect(() => {
     if (isOpen) {
@@ -305,62 +303,6 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
     }
   };
 
-  const handleSyncToFirestore = async () => {
-    setIsSyncingFirestore(true);
-    setFirestoreSyncStatus({ type: 'info', text: 'Pushing produce catalog to Cloud Firestore...' });
-    try {
-      const res = await syncAllProductsToFirestore();
-      if (res.success) {
-        setFirestoreSyncStatus({ type: 'success', text: res.message });
-      } else {
-        setFirestoreSyncStatus({ type: 'error', text: res.message });
-        setShowRulesHelper(true);
-      }
-    } catch (err: any) {
-      setFirestoreSyncStatus({ type: 'error', text: err?.message || 'Failed to sync to Firestore' });
-      setShowRulesHelper(true);
-    } finally {
-      setIsSyncingFirestore(false);
-    }
-  };
-
-  const handleCopyRules = () => {
-    const rulesText = `rules_version = '2';
-
-service cloud.firestore {
-  match /databases/{database}/documents {
-
-    // Default locked
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // Test ping
-    match /test/{testId} {
-      allow get: if true;
-    }
-
-    // Farm Fresh Produce Catalog: Open read & write for live inventory sync across share links
-    match /products/{productId} {
-      allow read, write: if true;
-    }
-
-    // Admins registry: readable and writable for store management
-    match /admins/{adminId} {
-      allow read, write: if true;
-    }
-
-    // User Profiles: private to the owner
-    match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-  }
-}`;
-    navigator.clipboard.writeText(rulesText);
-    setCopiedRules(true);
-    setTimeout(() => setCopiedRules(false), 3000);
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-3 sm:p-6 overflow-y-auto">
       <div className="bg-[#0f1712] border border-emerald-500/30 w-full max-w-5xl rounded-3xl shadow-2xl overflow-hidden my-4 text-white flex flex-col h-[92vh]">
@@ -440,29 +382,22 @@ service cloud.firestore {
           </div>
         </div>
 
-        {/* Live Simulation / Role Preview Alert Strip */}
-        {onSelectRoleForPreview && currentRole !== 'super_admin' && (
+        {/* Live Simulation / Role Preview Alert Strip (ONLY shown when Super Admin is previewing another role) */}
+        {isSimulatingRole && onSelectRoleForPreview && (
           <div className="bg-gradient-to-r from-purple-950/80 via-stone-900 to-purple-950/80 border-b border-purple-500/30 px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2 text-purple-200">
               <ShieldCheck className="h-4 w-4 text-purple-400 shrink-0" />
               <span>
-                Operating in <b className="text-white uppercase font-black px-1.5 py-0.5 rounded bg-purple-500/30 border border-purple-400/40">{currentRole.replace('_', ' ')}</b> preview mode.
+                Operating in <b className="text-white uppercase font-black px-1.5 py-0.5 rounded bg-purple-500/30 border border-purple-400/40">{(currentRole || '').replace('_', ' ')}</b> preview mode.
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setActiveTab('roleswitcher')}
-                className="text-xs bg-white/10 hover:bg-white/20 text-white font-bold px-3 py-1 rounded-lg transition cursor-pointer flex items-center gap-1.5 border border-white/20"
-              >
-                <Sliders className="h-3.5 w-3.5 text-purple-300" />
-                <span>Switch Role</span>
-              </button>
               <button
                 onClick={() => onSelectRoleForPreview('super_admin', SUPER_ADMIN_EMAIL)}
                 className="text-xs bg-amber-500 hover:bg-amber-400 text-black font-bold px-3 py-1 rounded-lg transition cursor-pointer flex items-center gap-1.5 shadow"
               >
                 <Crown className="h-3.5 w-3.5" />
-                <span>Reset to Super Admin</span>
+                <span>Exit Preview (Back to Super Admin)</span>
               </button>
             </div>
           </div>
@@ -512,8 +447,8 @@ service cloud.firestore {
             </button>
           )}
 
-          {/* Admin Staff Directory: Super Admin / Staff Managers */}
-          {permissions.canManageAdmins && (
+          {/* Admin Staff Directory: Strictly Super Admin Only */}
+          {currentRole === 'super_admin' && (
             <button
               onClick={() => setActiveTab('staff')}
               className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer whitespace-nowrap ${
@@ -527,8 +462,8 @@ service cloud.firestore {
             </button>
           )}
 
-          {/* Role Switcher: Accessible for previewing */}
-          {onSelectRoleForPreview && (
+          {/* Role Switcher: Strictly Super Admin Only */}
+          {currentRole === 'super_admin' && onSelectRoleForPreview && (
             <button
               onClick={() => setActiveTab('roleswitcher')}
               className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer whitespace-nowrap ${
@@ -538,7 +473,7 @@ service cloud.firestore {
               }`}
             >
               <Sliders className="h-4 w-4" />
-              <span>Role Switcher (Live Preview)</span>
+              <span>Role Switcher</span>
             </button>
           )}
         </div>
@@ -546,129 +481,6 @@ service cloud.firestore {
         {/* Tab 1: Produce Inventory */}
         {activeTab === 'inventory' && (
           <div className="flex-1 overflow-y-auto p-6 flex flex-col space-y-4">
-            {/* Cloud Firestore Live Synchronization Card */}
-            <div className="bg-gradient-to-r from-emerald-950/60 to-stone-900/80 border border-emerald-500/30 rounded-2xl p-4 flex flex-col space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center flex-shrink-0 relative">
-                    <Cloud className="h-5 w-5 text-emerald-400" />
-                    <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                    </span>
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-xs font-bold text-white uppercase tracking-wider">Automated Cloud Sync Active</h3>
-                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded border border-emerald-500/30 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                        Real-Time
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-emerald-200/80 mt-0.5">
-                      All changes to produce prices, stock, or descriptions automatically push to Cloud Firestore in real time. No manual button click is required.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => setShowRulesHelper(!showRulesHelper)}
-                    className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-medium transition cursor-pointer flex items-center gap-1.5"
-                  >
-                    <ShieldCheck className="h-3.5 w-3.5 text-amber-400" />
-                    <span>{showRulesHelper ? 'Hide Rules Guide' : 'Firestore Rules Guide'}</span>
-                  </button>
-
-                  <button
-                    onClick={handleSyncToFirestore}
-                    disabled={isSyncingFirestore}
-                    title="All updates are already automatic. Click only if you want to force a full re-verification of all 25 items."
-                    className="px-3 py-2 bg-emerald-800/60 hover:bg-emerald-700/80 border border-emerald-500/40 text-emerald-200 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
-                  >
-                    <RefreshCw className={`h-3 w-3 ${isSyncingFirestore ? 'animate-spin' : ''}`} />
-                    <span>{isSyncingFirestore ? 'Syncing...' : 'Force Full Resync'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Status Message */}
-              {firestoreSyncStatus && (
-                <div className={`text-xs px-3.5 py-2.5 rounded-xl border flex items-start justify-between gap-2 ${
-                  firestoreSyncStatus.type === 'success' ? 'bg-emerald-950/80 text-emerald-200 border-emerald-600/40' :
-                  firestoreSyncStatus.type === 'error' ? 'bg-rose-950/80 text-rose-200 border-rose-600/40' :
-                  'bg-blue-950/80 text-blue-200 border-blue-600/40'
-                }`}>
-                  <div className="flex items-center gap-2">
-                    {firestoreSyncStatus.type === 'success' ? <CheckCircle2 className="h-4 w-4 text-emerald-400 flex-shrink-0" /> :
-                     firestoreSyncStatus.type === 'error' ? <AlertTriangle className="h-4 w-4 text-rose-400 flex-shrink-0" /> :
-                     <RefreshCw className="h-4 w-4 text-blue-400 animate-spin flex-shrink-0" />}
-                    <span>{firestoreSyncStatus.text}</span>
-                  </div>
-                  {firestoreSyncStatus.type === 'error' && (
-                    <button
-                      onClick={() => setShowRulesHelper(true)}
-                      className="underline text-[11px] font-bold text-amber-300 hover:text-white flex-shrink-0 cursor-pointer"
-                    >
-                      View Fix
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Rules Guide Panel */}
-              {showRulesHelper && (
-                <div className="bg-black/60 border border-amber-500/30 rounded-xl p-4 text-xs space-y-3 mt-2">
-                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                    <span className="font-bold text-amber-400 flex items-center gap-1.5">
-                      <ShieldCheck className="h-4 w-4 text-amber-400" />
-                      1-Minute Fix: Deploy Rules in Firebase Console
-                    </span>
-                    <button
-                      onClick={handleCopyRules}
-                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-stone-950 rounded-lg font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow"
-                    >
-                      {copiedRules ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                      <span>{copiedRules ? 'Copied to Clipboard!' : 'Copy 1-Click Rules'}</span>
-                    </button>
-                  </div>
-
-                  <p className="text-white/80 text-[11px] leading-relaxed">
-                    By default, new Firebase projects reject writes until rules are published. To allow the Admin Portal to push produce to your live database:
-                  </p>
-
-                  <ol className="list-decimal list-inside space-y-2 text-white/90 text-[11px]">
-                    <li>
-                      Open your Firebase Console:{' '}
-                      <a
-                        href="https://console.firebase.google.com/project/ciya-advanced-course-training/firestore/rules"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-emerald-400 font-bold underline inline-flex items-center gap-1 ml-1"
-                      >
-                        Firestore Database &gt; Rules <ExternalLink className="h-3 w-3 inline" />
-                      </a>
-                    </li>
-                    <li>Click the <strong>Copy 1-Click Rules</strong> button above.</li>
-                    <li>Paste into the Firebase editor (replacing everything) and click <strong>Publish</strong>.</li>
-                    <li>Come back here and click <strong>Push to Cloud Firestore</strong>!</li>
-                  </ol>
-
-                  <div className="bg-stone-950/90 border border-white/10 rounded-lg p-2.5 font-mono text-[10px] text-emerald-300 select-all overflow-x-auto">
-                    <pre>{`rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} { allow read, write: if false; }
-    match /products/{productId} { allow read, write: if true; }
-    match /admins/{adminId} { allow read, write: if true; }
-    match /users/{userId} { allow read, write: if request.auth != null && request.auth.uid == userId; }
-  }
-}`}</pre>
-                  </div>
-                </div>
-              )}
-            </div>
-
             {/* Search & Actions Bar */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/5 p-4 rounded-2xl border border-white/10">
               <div className="flex-1 flex flex-col sm:flex-row gap-3 w-full md:w-auto">
@@ -1240,8 +1052,8 @@ service cloud.firestore {
           </div>
         )}
 
-        {/* Tab 2: Admin Staff Directory */}
-        {activeTab === 'staff' && (
+        {/* Tab 2: Admin Staff Directory (Strictly Super Admin Only) */}
+        {currentRole === 'super_admin' && activeTab === 'staff' && (
           <div className="flex-1 overflow-y-auto p-6 flex flex-col space-y-6">
             {/* Status notification */}
             {staffActionStatus && (
@@ -1454,8 +1266,8 @@ service cloud.firestore {
           </div>
         )}
 
-        {/* Tab 3: Interactive Role Switcher / Demo Mode */}
-        {activeTab === 'roleswitcher' && (
+        {/* Tab 3: Interactive Role Switcher / Demo Mode (Strictly Super Admin Only) */}
+        {currentRole === 'super_admin' && onSelectRoleForPreview && activeTab === 'roleswitcher' && (
           <div className="flex-1 overflow-y-auto p-6 flex flex-col space-y-5">
             <div className="bg-amber-500/10 border border-amber-500/30 p-5 rounded-2xl text-xs space-y-2 text-amber-200">
               <div className="flex items-center gap-2 text-sm font-bold text-amber-300">
