@@ -79,6 +79,8 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteStaffConfirmEmail, setDeleteStaffConfirmEmail] = useState<string | null>(null);
+  const [isDeletingStaffEmail, setIsDeletingStaffEmail] = useState<string | null>(null);
 
   // Supervisor Quality Hub State
   const [supervisorFilter, setSupervisorFilter] = useState<'all' | 'spoilage_risk' | 'low_stock' | 'organic'>('all');
@@ -207,7 +209,7 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
 
   const handleAddNewProduce = () => {
     if (!permissions.canCreate) {
-      alert("Access Denied: Only the Super Admin (comwebdot@gmail.com) can create new produce items.");
+      setStaffActionStatus({ type: 'error', text: "Access Denied: Only the Super Admin can create new produce items." });
       return;
     }
     setEditingProduct(null);
@@ -216,7 +218,7 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
 
   const handleEditProduce = (prod: Product) => {
     if (!permissions.canUpdate) {
-      alert(`Access Denied: Your role (${currentRole}) cannot update produce items. Super Admin and Managers only.`);
+      setStaffActionStatus({ type: 'error', text: `Access Denied: Your role (${currentRole}) cannot update produce items.` });
       return;
     }
     setEditingProduct(prod);
@@ -225,7 +227,7 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
 
   const handleDeleteProduce = async (prodId: string) => {
     if (!permissions.canDelete) {
-      alert(`Access Denied: Your role (${currentRole}) cannot delete produce. Requires Super Admin, Manager, or Supervisor.`);
+      setStaffActionStatus({ type: 'error', text: `Access Denied: Your role (${currentRole}) cannot delete produce.` });
       return;
     }
     try {
@@ -233,7 +235,7 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
       setDeleteConfirmId(null);
       onRefreshProducts();
     } catch (err: any) {
-      alert(err?.message || "Failed to delete produce");
+      console.error('Delete produce error:', err);
     }
   };
 
@@ -281,25 +283,43 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
   };
 
   const handleDeleteStaff = async (email: string) => {
-    if (!permissions.canManageAdmins) {
-      alert("Access Denied: Only the Super Admin can manage admin staff.");
+    const cleanEmail = email.trim().toLowerCase();
+    const isCallerSuperAdmin = currentRole === 'super_admin' || isImmutableSuperAdmin(currentEmail);
+    if (!isCallerSuperAdmin) {
+      setStaffActionStatus({ type: 'error', text: 'Access Denied: Only the Super Admin can manage admin staff.' });
       return;
     }
 
-    if (isImmutableSuperAdmin(email)) {
-      alert(`Access Denied: ${SUPER_ADMIN_EMAIL} is the immutable Root Super Admin and cannot be removed.`);
+    if (isImmutableSuperAdmin(cleanEmail)) {
+      setStaffActionStatus({ type: 'error', text: `Access Denied: ${cleanEmail} is an immutable Root Super Admin and cannot be removed.` });
       return;
     }
 
-    if (confirm(`Are you sure you want to revoke admin access for ${email}?`)) {
-      const res = await deleteAdminStaff(email, currentEmail || SUPER_ADMIN_EMAIL);
+    setIsDeletingStaffEmail(cleanEmail);
+    setDeleteStaffConfirmEmail(null);
+
+    // Optimistically update list so the UI responds immediately
+    const prevList = [...adminStaffList];
+    setAdminStaffList(prev => prev.filter(s => s.email.trim().toLowerCase() !== cleanEmail));
+
+    try {
+      const res = await deleteAdminStaff(cleanEmail, currentEmail || SUPER_ADMIN_EMAIL);
       if (res.success) {
         setStaffActionStatus({ type: 'success', text: res.message });
         const updated = await fetchAdminStaff();
-        setAdminStaffList(updated);
+        if (updated && updated.length > 0) {
+          setAdminStaffList(updated);
+        }
       } else {
         setStaffActionStatus({ type: 'error', text: res.message });
+        setAdminStaffList(prevList);
       }
+    } catch (err: any) {
+      console.error('Delete staff error:', err);
+      setStaffActionStatus({ type: 'error', text: err?.message || 'Failed to revoke admin position' });
+      setAdminStaffList(prevList);
+    } finally {
+      setIsDeletingStaffEmail(null);
     }
   };
 
@@ -1241,17 +1261,48 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
 
                           <td className="p-4 text-right">
                             {isRoot ? (
-                              <span className="text-[10px] text-amber-400/80 font-bold bg-amber-950/40 px-2 py-1 rounded border border-amber-500/30">
+                              <span className="text-[10px] text-amber-400/80 font-bold bg-amber-950/40 px-2.5 py-1 rounded border border-amber-500/30 inline-block">
                                 Permanent Root
                               </span>
-                            ) : permissions.canManageAdmins ? (
-                              <button
-                                onClick={() => handleDeleteStaff(staff.email)}
-                                className="text-red-400 hover:text-red-300 hover:bg-red-500/20 p-1.5 rounded-lg transition cursor-pointer"
-                                title="Revoke position"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                            ) : (permissions.canManageAdmins || currentRole === 'super_admin' || isImmutableSuperAdmin(currentEmail)) ? (
+                              deleteStaffConfirmEmail === staff.email ? (
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    onClick={() => handleDeleteStaff(staff.email)}
+                                    disabled={isDeletingStaffEmail === staff.email}
+                                    className="bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow"
+                                    title="Confirm Revocation"
+                                  >
+                                    {isDeletingStaffEmail === staff.email ? (
+                                      <>
+                                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                        <span>Revoking...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                        <span>Confirm Revoke</span>
+                                      </>
+                                    )}
+                                  </button>
+                                  <button
+                                    onClick={() => setDeleteStaffConfirmEmail(null)}
+                                    disabled={isDeletingStaffEmail === staff.email}
+                                    className="text-white/60 hover:text-white px-2 py-1 text-xs cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setDeleteStaffConfirmEmail(staff.email)}
+                                  className="text-red-400 hover:text-red-300 hover:bg-red-500/20 px-3 py-1.5 rounded-xl transition cursor-pointer border border-red-500/30 hover:border-red-500/60 flex items-center gap-1.5 text-xs font-semibold ml-auto"
+                                  title="Revoke admin position"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <span>Revoke</span>
+                                </button>
+                              )
                             ) : (
                               <span className="text-[10px] text-white/30 italic">Protected</span>
                             )}

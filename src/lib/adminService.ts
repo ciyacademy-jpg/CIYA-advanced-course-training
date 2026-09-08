@@ -396,12 +396,19 @@ export async function deleteAdminStaff(
     console.warn('Central server admin delete notice:', err?.message);
   }
 
-  // 3. Delete from Firestore
+  // 3. Delete from Firestore (both sanitized ID and raw email to cover all schemas)
   try {
     const docRef = doc(db, 'admins', id);
     await deleteDoc(docRef);
   } catch (error: any) {
-    console.warn('Firestore delete admin notice:', error?.message);
+    console.warn('Firestore delete admin notice (id):', error?.message);
+  }
+
+  if (cleanEmail !== id) {
+    try {
+      const altDocRef = doc(db, 'admins', cleanEmail);
+      await deleteDoc(altDocRef);
+    } catch (_) {}
   }
 
   return {

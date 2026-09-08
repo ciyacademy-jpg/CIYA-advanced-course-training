@@ -522,11 +522,15 @@ app.post('/api/admins', (req: Request, res: Response) => {
 
 app.delete('/api/admins/:id', (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    const target = liveAdmins.find(a => a.id === id || a.email.toLowerCase() === id.toLowerCase());
+    const rawId = decodeURIComponent(req.params.id || '').trim().toLowerCase();
+    const target = liveAdmins.find(a => 
+      a.id.toLowerCase() === rawId || 
+      a.email.toLowerCase() === rawId ||
+      a.email.toLowerCase().replace(/[^a-z0-9]/g, '_') === rawId
+    );
 
     if (!target) {
-      res.status(404).json({ success: false, message: 'Admin not found.' });
+      res.json({ success: true, message: 'Admin position already removed or not found.' });
       return;
     }
 
@@ -535,7 +539,11 @@ app.delete('/api/admins/:id', (req: Request, res: Response) => {
       return;
     }
 
-    liveAdmins = liveAdmins.filter(a => a.id !== target.id && a.email.toLowerCase() !== target.email.toLowerCase());
+    liveAdmins = liveAdmins.filter(a => 
+      a.id !== target.id && 
+      a.email.toLowerCase() !== target.email.toLowerCase() &&
+      a.email.toLowerCase().replace(/[^a-z0-9]/g, '_') !== rawId
+    );
     saveAdminsToFile(liveAdmins);
     broadcastAdmins(liveAdmins);
 
