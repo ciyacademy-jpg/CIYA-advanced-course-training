@@ -75,7 +75,7 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
   onDeleteProduct,
   onNavigateToAuth
 }) => {
-  const [activeTab, setActiveTab] = useState<'inventory' | 'supervisor_hub' | 'sales_hub' | 'staff' | 'roleswitcher'>('inventory');
+  const [activeTab, setActiveTab] = useState<'inventory' | 'supervisor_hub' | 'sales_hub' | 'staff'>('inventory');
   const [adminStaffList, setAdminStaffList] = useState<AdminUser[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All Harvest');
@@ -101,17 +101,13 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
   const [newAdminRole, setNewAdminRole] = useState<AdminRole>('manager');
   const [staffActionStatus, setStaffActionStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isAddingStaff, setIsAddingStaff] = useState(false);
-  const [copiedInvite, setCopiedInvite] = useState(false);
-  const [lastAppointedStaff, setLastAppointedStaff] = useState<{ email: string; name: string; role: AdminRole } | null>(null);
-  const [lastRevokedEmail, setLastRevokedEmail] = useState<string | null>(null);
-  const [copiedRevokeLink, setCopiedRevokeLink] = useState(false);
 
   const permissions = getAdminPermissions(currentRole);
 
-  // Guard activeTab: ONLY super admin can access staff directory or role switcher
+  // Guard activeTab: ONLY super admin can access staff directory
   useEffect(() => {
     if (currentRole !== 'super_admin') {
-      if (activeTab === 'staff' || activeTab === 'roleswitcher') {
+      if (activeTab === 'staff') {
         setActiveTab('inventory');
       }
     }
@@ -285,11 +281,6 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
     setIsAddingStaff(false);
     if (res.success) {
       setStaffActionStatus({ type: 'success', text: res.message });
-      setLastAppointedStaff({
-        email: res.admin?.email || newAdminEmail.trim().toLowerCase(),
-        name: res.admin?.name || newAdminName.trim(),
-        role: res.admin?.role || newAdminRole
-      });
       setNewAdminEmail('');
       setNewAdminName('');
       setNewAdminRole('manager');
@@ -333,7 +324,6 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
     try {
       const res = await deleteAdminStaff(cleanEmail, currentEmail || SUPER_ADMIN_EMAIL);
       if (res.success) {
-        setLastRevokedEmail(cleanEmail);
         setStaffActionStatus({ 
           type: 'success', 
           text: `Admin access for ${cleanEmail} was completely revoked! That user's Admin Center has been terminated.` 
@@ -511,21 +501,6 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
             >
               <Users className="h-4 w-4" />
               <span>Admin Staff Directory ({adminStaffList.length})</span>
-            </button>
-          )}
-
-          {/* Role Switcher: Strictly Super Admin Only */}
-          {currentRole === 'super_admin' && onSelectRoleForPreview && (
-            <button
-              onClick={() => setActiveTab('roleswitcher')}
-              className={`flex items-center gap-2 px-4 py-3 font-semibold text-xs transition border-b-2 cursor-pointer whitespace-nowrap ${
-                activeTab === 'roleswitcher'
-                  ? 'border-amber-500 text-amber-400 bg-amber-500/10'
-                  : 'border-transparent text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/5'
-              }`}
-            >
-              <Sliders className="h-4 w-4" />
-              <span>Role Switcher</span>
             </button>
           )}
         </div>
@@ -1109,59 +1084,20 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
           <div className="flex-1 overflow-y-auto p-6 flex flex-col space-y-6">
             {/* Status notification */}
             {staffActionStatus && (
-              <div className={`p-4 rounded-2xl text-xs font-semibold space-y-2 ${
+              <div className={`p-4 rounded-2xl text-xs font-semibold flex items-center justify-between gap-2 ${
                 staffActionStatus.type === 'success' ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800' : 'bg-red-950/80 text-red-300 border border-red-800'
               }`}>
                 <div className="flex items-center gap-2">
                   {staffActionStatus.type === 'success' ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
                   <span>{staffActionStatus.text}</span>
                 </div>
-
-                {staffActionStatus.type === 'success' && lastAppointedStaff && (
-                  <div className="pt-2 border-t border-emerald-800/60 flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-[11px] text-emerald-200/80 font-normal">
-                      Send quick login instructions to <b className="text-white">{lastAppointedStaff.email}</b>:
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const origin = typeof window !== 'undefined' ? window.location.origin : '';
-                        const targetOrigin = origin.includes('ais-dev-') ? origin.replace('ais-dev-', 'ais-pre-') : origin;
-                        const msg = `Hi ${lastAppointedStaff.name || 'there'}! You have been granted ${lastAppointedStaff.role.replace('_', ' ').toUpperCase()} admin privileges on FreshBasket NG. To access your portal, visit ${targetOrigin}/?staff=${encodeURIComponent(lastAppointedStaff.email)}&role=${lastAppointedStaff.role}&name=${encodeURIComponent(lastAppointedStaff.name)}. Your Admin Center and produce controls will activate automatically!`;
-                        navigator.clipboard.writeText(msg);
-                        setCopiedInvite(true);
-                        setTimeout(() => setCopiedInvite(false), 3000);
-                      }}
-                      className="bg-emerald-800 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1.5 transition cursor-pointer shadow"
-                    >
-                      {copiedInvite ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
-                      <span>{copiedInvite ? 'Copied to Clipboard!' : 'Copy Onboarding Message'}</span>
-                    </button>
-                  </div>
-                )}
-
-                {staffActionStatus.type === 'success' && lastRevokedEmail && (
-                  <div className="pt-2 border-t border-emerald-800/60 flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-[11px] text-emerald-200/80 font-normal">
-                      Test revocation in your Preview Link tab:
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const origin = typeof window !== 'undefined' ? window.location.origin : '';
-                        const targetOrigin = origin.includes('ais-dev-') ? origin.replace('ais-dev-', 'ais-pre-') : origin;
-                        const revokeUrl = `${targetOrigin}/?revoked=${encodeURIComponent(lastRevokedEmail)}`;
-                        navigator.clipboard.writeText(revokeUrl);
-                        setCopiedRevokeLink(true);
-                        setTimeout(() => setCopiedRevokeLink(false), 3000);
-                      }}
-                      className="bg-red-900/60 hover:bg-red-800 text-red-200 font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1.5 transition cursor-pointer shadow border border-red-700/50"
-                    >
-                      {copiedRevokeLink ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
-                      <span>{copiedRevokeLink ? 'Copied Revoke Link!' : 'Copy Revoke Test Link'}</span>
-                    </button>
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setStaffActionStatus(null)}
+                  className="text-white/60 hover:text-white p-1 rounded-lg transition"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
             )}
 
@@ -1247,37 +1183,6 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
 
             {/* Current Staff Registry Table */}
             <div className="space-y-3">
-              {/* Informational Banner: How Appointed Users Access the Admin Center On Their Own End */}
-              <div className="bg-emerald-950/50 border border-emerald-500/40 rounded-2xl p-4 text-xs text-emerald-200 space-y-2 shadow-lg">
-                <div className="flex items-center gap-2 font-bold text-white text-sm">
-                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                  <span>How Appointed Users Access Their Admin Center On Their Own End</span>
-                </div>
-                <p className="text-white/80 text-[11px] leading-relaxed">
-                  When you grant an admin position below, the user can immediately access their Admin Center and badges on their computer or mobile phone through either of these two methods:
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
-                  <div className="bg-black/40 border border-emerald-500/30 rounded-xl p-2.5 space-y-1">
-                    <span className="font-bold text-emerald-300 text-[11px] flex items-center gap-1.5">
-                      <Copy className="h-3 w-3" />
-                      <span>Option 1: Direct 1-Click Link</span>
-                    </span>
-                    <p className="text-[10px] text-white/70">
-                      Click <b>"Copy Link"</b> in the table below and share it with the user. When opened, it automatically authenticates their staff session with their exact assigned role.
-                    </p>
-                  </div>
-                  <div className="bg-black/40 border border-emerald-500/30 rounded-xl p-2.5 space-y-1">
-                    <span className="font-bold text-emerald-300 text-[11px] flex items-center gap-1.5">
-                      <ShieldCheck className="h-3 w-3" />
-                      <span>Option 2: Sign In Page (Staff Portal)</span>
-                    </span>
-                    <p className="text-[10px] text-white/70">
-                      The user opens FreshBasket, clicks <b>Sign In</b>, and types their appointed email into the <b>Appointed Staff Login</b> box to activate their Admin Center instantly.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <ShieldCheck className="h-4 w-4 text-emerald-400" />
@@ -1447,244 +1352,6 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                 </table>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Tab 3: Interactive Role Switcher / Demo Mode (Strictly Super Admin Only) */}
-        {currentRole === 'super_admin' && onSelectRoleForPreview && activeTab === 'roleswitcher' && (
-          <div className="flex-1 overflow-y-auto p-6 flex flex-col space-y-5">
-            <div className="bg-amber-500/10 border border-amber-500/30 p-5 rounded-2xl text-xs space-y-2 text-amber-200">
-              <div className="flex items-center gap-2 text-sm font-bold text-amber-300">
-                <Sparkles className="h-4 w-4" />
-                <span>Role-Based Access Control (RBAC) Testing Station</span>
-              </div>
-              <p className="text-white/80">
-                Click any role card below to instantly simulate that specific authorization tier in this session.
-                Verify live how produce buttons (Add, Edit, Delete) adapt strictly to each position's granted privileges.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Super Admin */}
-              <div 
-                onClick={() => onSelectRoleForPreview && onSelectRoleForPreview('super_admin', SUPER_ADMIN_EMAIL)}
-                className={`p-5 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-4 ${
-                  currentRole === 'super_admin'
-                    ? 'bg-amber-950/40 border-amber-400 shadow-xl ring-2 ring-amber-400/20'
-                    : 'bg-white/5 border-white/10 hover:border-amber-400/50 hover:bg-white/10'
-                }`}
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black uppercase text-amber-300 bg-amber-500/20 px-2.5 py-1 rounded-full border border-amber-500/40 flex items-center gap-1.5">
-                      <Crown className="h-3.5 w-3.5 text-amber-400" />
-                      Super Admin
-                    </span>
-                    <span className="text-[10px] text-amber-400 font-bold">IMMUTABLE ROOT</span>
-                  </div>
-                  <h4 className="text-sm font-bold text-white font-mono">{SUPER_ADMIN_EMAIL}</h4>
-                  <p className="text-xs text-white/70">
-                    Highest authority level with full CRUD rights. Exclusive capability to create new produce and appoint or revoke admin staff accounts.
-                  </p>
-                </div>
-
-                <div className="space-y-1.5 pt-3 border-t border-white/10 text-xs font-mono">
-                  <div className="text-emerald-400 flex items-center gap-1.5">
-                    <Check className="h-3.5 w-3.5" /> <span>Produce: Create, Read, Update, Delete</span>
-                  </div>
-                  <div className="text-emerald-400 flex items-center gap-1.5">
-                    <Check className="h-3.5 w-3.5" /> <span>Staff Management: Appoint & Revoke Admins</span>
-                  </div>
-                </div>
-
-                <button className="w-full bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs py-2 rounded-xl transition cursor-pointer">
-                  {currentRole === 'super_admin' ? 'Currently Active' : 'Switch to Super Admin'}
-                </button>
-              </div>
-
-              {/* Manager */}
-              <div 
-                onClick={() => onSelectRoleForPreview && onSelectRoleForPreview('manager', currentEmail || 'manager-mode')}
-                className={`p-5 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-4 ${
-                  currentRole === 'manager'
-                    ? 'bg-blue-950/40 border-blue-400 shadow-xl ring-2 ring-blue-400/20'
-                    : 'bg-white/5 border-white/10 hover:border-blue-400/50 hover:bg-white/10'
-                }`}
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black uppercase text-blue-300 bg-blue-500/20 px-2.5 py-1 rounded-full border border-blue-500/40">
-                      Produce Manager
-                    </span>
-                    <span className="text-[10px] text-blue-400 font-bold">OPERATIONS TIER</span>
-                  </div>
-                  <h4 className="text-sm font-bold text-white font-mono">Manager Permissions Mode</h4>
-                  <p className="text-xs text-white/70">
-                    Granted the power to update, delete, and read produce items live. Cannot create brand-new produce or manage admin staff.
-                  </p>
-                </div>
-
-                <div className="space-y-1.5 pt-3 border-t border-white/10 text-xs font-mono">
-                  <div className="text-emerald-400 flex items-center gap-1.5">
-                    <Check className="h-3.5 w-3.5" /> <span>Produce: Update, Delete, Read</span>
-                  </div>
-                  <div className="text-red-400 flex items-center gap-1.5">
-                    <X className="h-3.5 w-3.5" /> <span>Produce: Cannot Create</span>
-                  </div>
-                  <div className="text-red-400 flex items-center gap-1.5">
-                    <X className="h-3.5 w-3.5" /> <span>Staff: Cannot Manage Admins</span>
-                  </div>
-                </div>
-
-                <button className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs py-2 rounded-xl transition cursor-pointer">
-                  {currentRole === 'manager' ? 'Currently Active' : 'Switch to Manager'}
-                </button>
-              </div>
-
-              {/* Supervisor */}
-              <div 
-                onClick={() => onSelectRoleForPreview && onSelectRoleForPreview('supervisor', currentEmail || 'supervisor-mode')}
-                className={`p-5 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-4 ${
-                  currentRole === 'supervisor'
-                    ? 'bg-purple-950/40 border-purple-400 shadow-xl ring-2 ring-purple-400/20'
-                    : 'bg-white/5 border-white/10 hover:border-purple-400/50 hover:bg-white/10'
-                }`}
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black uppercase text-purple-300 bg-purple-500/20 px-2.5 py-1 rounded-full border border-purple-500/40">
-                      Quality Supervisor
-                    </span>
-                    <span className="text-[10px] text-purple-400 font-bold">SUPERVISION TIER</span>
-                  </div>
-                  <h4 className="text-sm font-bold text-white font-mono">Supervisor Permissions Mode</h4>
-                  <p className="text-xs text-white/70">
-                    Granted the power to delete and read only. Authorized to purge spoiled or outdated produce, but cannot edit details or create items.
-                  </p>
-                </div>
-
-                <div className="space-y-1.5 pt-3 border-t border-white/10 text-xs font-mono">
-                  <div className="text-emerald-400 flex items-center gap-1.5">
-                    <Check className="h-3.5 w-3.5" /> <span>Produce: Delete, Read Only</span>
-                  </div>
-                  <div className="text-red-400 flex items-center gap-1.5">
-                    <X className="h-3.5 w-3.5" /> <span>Produce: Cannot Update or Create</span>
-                  </div>
-                </div>
-
-                <button className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs py-2 rounded-xl transition cursor-pointer">
-                  {currentRole === 'supervisor' ? 'Currently Active' : 'Switch to Supervisor'}
-                </button>
-              </div>
-
-              {/* Sales Rep */}
-              <div 
-                onClick={() => onSelectRoleForPreview && onSelectRoleForPreview('sales_rep', currentEmail || 'salesrep-mode')}
-                className={`p-5 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-4 ${
-                  currentRole === 'sales_rep'
-                    ? 'bg-emerald-950/40 border-emerald-400 shadow-xl ring-2 ring-emerald-400/20'
-                    : 'bg-white/5 border-white/10 hover:border-emerald-400/50 hover:bg-white/10'
-                }`}
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black uppercase text-emerald-300 bg-emerald-500/20 px-2.5 py-1 rounded-full border border-emerald-500/40">
-                      Sales Representative
-                    </span>
-                    <span className="text-[10px] text-emerald-400 font-bold">CLIENT DISPATCH TIER</span>
-                  </div>
-                  <h4 className="text-sm font-bold text-white font-mono">Sales Rep Permissions Mode</h4>
-                  <p className="text-xs text-white/70">
-                    Granted the power to read only. Full access to inventory, warehouse stock levels, and wholesale metrics without mutation rights.
-                  </p>
-                </div>
-
-                <div className="space-y-1.5 pt-3 border-t border-white/10 text-xs font-mono">
-                  <div className="text-emerald-400 flex items-center gap-1.5">
-                    <Check className="h-3.5 w-3.5" /> <span>Produce: Read Only</span>
-                  </div>
-                  <div className="text-red-400 flex items-center gap-1.5">
-                    <X className="h-3.5 w-3.5" /> <span>Produce: Cannot Create, Update, or Delete</span>
-                  </div>
-                </div>
-
-                <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 rounded-xl transition cursor-pointer">
-                  {currentRole === 'sales_rep' ? 'Currently Active' : 'Switch to Sales Rep'}
-                </button>
-              </div>
-
-              {/* Public Shopper Mode (Test No-Admin Customer Experience) */}
-              <div 
-                onClick={() => {
-                  if (onSelectRoleForPreview) onSelectRoleForPreview(null, 'shopper@freshbasket.ng');
-                  onClose();
-                }}
-                className={`p-5 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-4 md:col-span-2 ${
-                  currentRole === null
-                    ? 'bg-slate-900/60 border-slate-400 shadow-xl ring-2 ring-slate-400/20'
-                    : 'bg-white/5 border-white/10 hover:border-slate-400/50 hover:bg-white/10'
-                }`}
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black uppercase text-slate-300 bg-white/10 px-2.5 py-1 rounded-full border border-white/20">
-                      Public Customer & Shopper
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-bold">NON-ADMIN STOREFRONT</span>
-                  </div>
-                  <h4 className="text-sm font-bold text-white font-mono">Customer / Shopper Experience Mode</h4>
-                  <p className="text-xs text-white/70">
-                    Experience FreshBasket exactly as regular customers and shoppers see it. All administrative navigation buttons and produce mutation controls are completely hidden. A floating banner will allow you to return to Super Admin anytime.
-                  </p>
-                </div>
-
-                <div className="space-y-1.5 pt-3 border-t border-white/10 text-xs font-mono grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div className="text-red-400 flex items-center gap-1.5">
-                    <X className="h-3.5 w-3.5" /> <span>No Admin Center Button</span>
-                  </div>
-                  <div className="text-red-400 flex items-center gap-1.5">
-                    <X className="h-3.5 w-3.5" /> <span>No Produce Price or Stock Controls</span>
-                  </div>
-                </div>
-
-                <button className="w-full bg-white/10 hover:bg-white/20 text-white font-bold text-xs py-2 rounded-xl transition cursor-pointer">
-                  Switch to Customer Storefront View
-                </button>
-              </div>
-            </div>
-
-            {/* If any custom staff members have been added by the Super Admin, display them */}
-            {adminStaffList.filter(s => !isImmutableSuperAdmin(s.email)).length > 0 && (
-              <div className="pt-4 border-t border-white/10 space-y-3">
-                <h4 className="text-xs font-bold text-white/80 uppercase tracking-wider">
-                  Or Simulate Appointed Staff Members ({adminStaffList.filter(s => !isImmutableSuperAdmin(s.email)).length})
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                  {adminStaffList.filter(s => !isImmutableSuperAdmin(s.email)).map(staff => (
-                    <div
-                      key={staff.email}
-                      onClick={() => onSelectRoleForPreview && onSelectRoleForPreview(staff.role, staff.email)}
-                      className={`p-3.5 rounded-xl border text-xs cursor-pointer transition flex items-center justify-between ${
-                        currentEmail === staff.email
-                          ? 'bg-emerald-950/60 border-emerald-400 ring-2 ring-emerald-400/20'
-                          : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/10'
-                      }`}
-                    >
-                      <div>
-                        <p className="font-bold text-white truncate">{staff.name}</p>
-                        <p className="text-[11px] text-white/60 truncate font-mono">{staff.email}</p>
-                        <span className="text-[9px] uppercase px-1.5 py-0.5 rounded font-black bg-white/10 text-emerald-300 mt-1 inline-block">
-                          {staff.role.replace('_', ' ')}
-                        </span>
-                      </div>
-                      <button className="text-[10px] bg-white/10 hover:bg-white/20 text-white px-2.5 py-1 rounded-lg font-bold">
-                        {currentEmail === staff.email ? 'Active' : 'Test'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>

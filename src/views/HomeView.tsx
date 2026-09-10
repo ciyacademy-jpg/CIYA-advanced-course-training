@@ -444,26 +444,6 @@ export default function HomeView({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {currentRole && (
-              <button
-                onClick={onOpenAdminPortal}
-                className="text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 px-3.5 py-2 rounded-xl border border-amber-500/40 flex items-center gap-2 transition cursor-pointer"
-              >
-                <Settings className="h-3.5 w-3.5" />
-                <span>Admin Operations Center</span>
-              </button>
-            )}
-
-            {permissions.canCreate && (
-              <button
-                onClick={onAddNewProduce}
-                className="text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl shadow flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Plus className="h-4 w-4" />
-                <span>Add Produce</span>
-              </button>
-            )}
-
             <button
               onClick={() => onNavigate('shop')}
               className="text-xs font-bold text-[#FACC15] hover:text-white hover:bg-white/10 px-4 py-2 rounded-xl border border-white/20 transition cursor-pointer"

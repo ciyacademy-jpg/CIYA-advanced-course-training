@@ -93,16 +93,6 @@ export default function Navbar({
           <span>🚚 FREE same-day delivery across Lagos for orders above <b>₦25,000</b>!</span>
         </div>
         <div className="hidden sm:flex items-center gap-4 text-[11px] text-emerald-300">
-          {!currentRole && (
-            <button
-              onClick={() => onNavigate('auth')}
-              className="text-amber-300 hover:text-amber-200 font-extrabold flex items-center gap-1.5 cursor-pointer transition bg-amber-500/20 hover:bg-amber-500/30 px-2.5 py-0.5 rounded-full border border-amber-500/40"
-              title="Super Administrator (ciyacademy@gmail.com) Instant Sign In"
-            >
-              <ShieldCheck className="h-3 w-3 text-amber-400" />
-              <span>Super Admin Login</span>
-            </button>
-          )}
           <span>Call: +234 812 456 7812</span>
           <span>Support: 24/7 Available</span>
         </div>
@@ -346,35 +336,6 @@ export default function Navbar({
                 <span className="hidden sm:inline">Sign In / Up</span>
               </button>
             )}
-
-            {/* Admin Portal Header Button */}
-            {currentRole ? (
-              <button
-                onClick={onOpenAdminPortal}
-                className={`flex items-center gap-1.5 py-1.5 px-3 rounded-full text-xs font-bold shadow transition cursor-pointer border ${
-                  currentRole === 'super_admin' ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40' :
-                  currentRole === 'manager' ? 'bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border-blue-500/40' :
-                  currentRole === 'supervisor' ? 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border-purple-500/40' :
-                  'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/40'
-                }`}
-                title={`Admin Produce Center (${currentRole.replace('_', ' ').toUpperCase()})`}
-              >
-                <ShieldCheck className={`h-4 w-4 ${
-                  currentRole === 'super_admin' ? 'text-amber-400' :
-                  currentRole === 'manager' ? 'text-blue-400' :
-                  currentRole === 'supervisor' ? 'text-purple-400' : 'text-emerald-400'
-                }`} />
-                <span className="font-bold whitespace-nowrap">Admin Center</span>
-                <span className={`text-[9px] uppercase px-1.5 py-0.5 rounded font-black ${
-                  currentRole === 'super_admin' ? 'bg-amber-500/30 text-amber-200' :
-                  currentRole === 'manager' ? 'bg-blue-500/30 text-blue-200' :
-                  currentRole === 'supervisor' ? 'bg-purple-500/30 text-purple-200' :
-                  'bg-emerald-500/30 text-emerald-200'
-                }`}>
-                  {currentRole.replace('_', ' ')}
-                </span>
-              </button>
-            ) : null}
 
             {/* Cart Selector Panel Trigger */}
             <button
