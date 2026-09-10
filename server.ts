@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { products as initialProducts } from './src/data/products';
-import { DEFAULT_ADMINS, SUPER_ADMIN_EMAIL } from './src/lib/adminService';
+import { DEFAULT_ADMINS, SUPER_ADMIN_EMAIL, isImmutableSuperAdmin } from './src/lib/adminService';
 import { Product, AdminUser } from './src/types';
 
 const app = express();
@@ -289,6 +289,7 @@ function broadcastProducts(products: Product[]) {
   for (const client of productSSEClients) {
     try {
       client.write(`event: products_updated\ndata: ${payload}\n\n`);
+      (client as any).flush?.();
     } catch {
       productSSEClients.delete(client);
     }
@@ -300,6 +301,7 @@ function broadcastAdmins(admins: AdminUser[]) {
   for (const client of adminSSEClients) {
     try {
       client.write(`event: admins_updated\ndata: ${payload}\n\n`);
+      (client as any).flush?.();
     } catch {
       adminSSEClients.delete(client);
     }
@@ -311,6 +313,7 @@ setInterval(() => {
   for (const client of productSSEClients) {
     try {
       client.write(': keep-alive\n\n');
+      (client as any).flush?.();
     } catch {
       productSSEClients.delete(client);
     }
@@ -318,11 +321,12 @@ setInterval(() => {
   for (const client of adminSSEClients) {
     try {
       client.write(': keep-alive\n\n');
+      (client as any).flush?.();
     } catch {
       adminSSEClients.delete(client);
     }
   }
-}, 20000);
+}, 15000);
 
 // ==========================================
 // API ROUTES
@@ -355,12 +359,15 @@ app.get('/api/products', (req: Request, res: Response) => {
 // GET /api/products/stream: SSE real-time stream
 app.get('/api/products/stream', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.flushHeaders?.();
 
   // Send current state immediately
   res.write(`event: products_updated\ndata: ${JSON.stringify(liveProducts)}\n\n`);
+  (res as any).flush?.();
 
   productSSEClients.add(res);
 
@@ -377,6 +384,19 @@ app.post('/api/products', (req: Request, res: Response) => {
     if (!product || !product.id || !product.name) {
       res.status(400).json({ success: false, message: 'Invalid produce payload: id and name are required.' });
       return;
+    }
+
+    const callerEmail = ((email || req.headers['x-admin-email'] || req.query.email) as string || '').trim().toLowerCase();
+    if (callerEmail) {
+      const isSuper = callerEmail === SUPER_ADMIN_EMAIL.toLowerCase();
+      const adminMatch = liveAdmins.find(a => a.email.toLowerCase() === callerEmail);
+      if (!isSuper && !adminMatch) {
+        res.status(403).json({
+          success: false,
+          message: `Access Denied: Admin privileges for ${callerEmail} have been revoked.`
+        });
+        return;
+      }
     }
 
     const cleanProduct = normalizeProduct(product);
@@ -398,7 +418,7 @@ app.post('/api/products', (req: Request, res: Response) => {
     // Automatically synchronize with Cloud Firestore in background (No manual push required)
     autoSyncToCloudFirestore(cleanProduct);
 
-    console.log(`[Produce API] Product "${cleanProduct.name}" (${cleanProduct.id}) ${isNew ? 'created' : 'updated'} by ${email || 'admin'}`);
+    console.log(`[Produce API] Product "${cleanProduct.name}" (${cleanProduct.id}) ${isNew ? 'created' : 'updated'} by ${callerEmail || 'admin'}`);
 
     res.json({
       success: true,
@@ -416,6 +436,20 @@ app.post('/api/products', (req: Request, res: Response) => {
 app.delete('/api/products/:id', (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const callerEmail = ((req.headers['x-admin-email'] || req.query.email || req.body?.email) as string || '').trim().toLowerCase();
+
+    if (callerEmail) {
+      const isSuper = callerEmail === SUPER_ADMIN_EMAIL.toLowerCase();
+      const adminMatch = liveAdmins.find(a => a.email.toLowerCase() === callerEmail);
+      if (!isSuper && !adminMatch) {
+        res.status(403).json({
+          success: false,
+          message: `Access Denied: Admin privileges for ${callerEmail} have been revoked.`
+        });
+        return;
+      }
+    }
+
     const existing = liveProducts.find(p => p.id === id);
 
     if (!existing) {
@@ -432,7 +466,7 @@ app.delete('/api/products/:id', (req: Request, res: Response) => {
     // Automatically remove from Cloud Firestore in background
     autoDeleteFromCloudFirestore(id);
 
-    console.log(`[Produce API] Product "${existing.name}" (${id}) deleted from catalog.`);
+    console.log(`[Produce API] Product "${existing.name}" (${id}) deleted from catalog by ${callerEmail || 'admin'}.`);
 
     res.json({
       success: true,
@@ -455,13 +489,35 @@ app.get('/api/admins', (req: Request, res: Response) => {
   });
 });
 
+app.get('/api/admins/check/:email', (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  const cleanEmail = decodeURIComponent(req.params.email || '').trim().toLowerCase();
+  const target = liveAdmins.find(a => a.email.toLowerCase() === cleanEmail);
+  if (target) {
+    res.json({
+      success: true,
+      isStaff: true,
+      admin: target
+    });
+  } else {
+    res.json({
+      success: true,
+      isStaff: false,
+      message: 'Email not found in authorized staff directory.'
+    });
+  }
+});
+
 app.get('/api/admins/stream', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.flushHeaders?.();
 
   res.write(`event: admins_updated\ndata: ${JSON.stringify(liveAdmins)}\n\n`);
+  (res as any).flush?.();
 
   adminSSEClients.add(res);
 
@@ -523,10 +579,13 @@ app.post('/api/admins', (req: Request, res: Response) => {
 app.delete('/api/admins/:id', (req: Request, res: Response) => {
   try {
     const rawId = decodeURIComponent(req.params.id || '').trim().toLowerCase();
+    const rawWithPlus = rawId.replace(/ /g, '+');
     const target = liveAdmins.find(a => 
       a.id.toLowerCase() === rawId || 
+      a.id.toLowerCase() === rawWithPlus ||
       a.email.toLowerCase() === rawId ||
-      a.email.toLowerCase().replace(/[^a-z0-9]/g, '_') === rawId
+      a.email.toLowerCase() === rawWithPlus ||
+      a.email.toLowerCase().replace(/[^a-z0-9]/g, '_') === rawId.replace(/[^a-z0-9]/g, '_')
     );
 
     if (!target) {
@@ -534,15 +593,18 @@ app.delete('/api/admins/:id', (req: Request, res: Response) => {
       return;
     }
 
-    if (target.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || target.isImmutable) {
+    if (
+      target.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || 
+      target.isImmutable || 
+      isImmutableSuperAdmin(target.email)
+    ) {
       res.status(403).json({ success: false, message: 'Root Super Admin cannot be deleted.' });
       return;
     }
 
     liveAdmins = liveAdmins.filter(a => 
       a.id !== target.id && 
-      a.email.toLowerCase() !== target.email.toLowerCase() &&
-      a.email.toLowerCase().replace(/[^a-z0-9]/g, '_') !== rawId
+      a.email.toLowerCase() !== target.email.toLowerCase()
     );
     saveAdminsToFile(liveAdmins);
     broadcastAdmins(liveAdmins);

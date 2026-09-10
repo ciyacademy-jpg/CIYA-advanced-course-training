@@ -92,7 +92,17 @@ export default function Navbar({
           <span className="inline-block h-2 w-2 rounded-full bg-[#F97316] animate-pulse"></span>
           <span>🚚 FREE same-day delivery across Lagos for orders above <b>₦25,000</b>!</span>
         </div>
-        <div className="hidden md:flex items-center gap-4 text-[11px] text-emerald-300">
+        <div className="hidden sm:flex items-center gap-4 text-[11px] text-emerald-300">
+          {!currentRole && (
+            <button
+              onClick={() => onNavigate('auth')}
+              className="text-amber-300 hover:text-amber-200 font-extrabold flex items-center gap-1.5 cursor-pointer transition bg-amber-500/20 hover:bg-amber-500/30 px-2.5 py-0.5 rounded-full border border-amber-500/40"
+              title="Super Administrator (ciyacademy@gmail.com) Instant Sign In"
+            >
+              <ShieldCheck className="h-3 w-3 text-amber-400" />
+              <span>Super Admin Login</span>
+            </button>
+          )}
           <span>Call: +234 812 456 7812</span>
           <span>Support: 24/7 Available</span>
         </div>
@@ -337,8 +347,8 @@ export default function Navbar({
               </button>
             )}
 
-            {/* Admin Portal Header Button (Only visible to authenticated FreshBasket staff) */}
-            {currentRole && (
+            {/* Admin Portal Header Button */}
+            {currentRole ? (
               <button
                 onClick={onOpenAdminPortal}
                 className={`flex items-center gap-1.5 py-1.5 px-3 rounded-full text-xs font-bold shadow transition cursor-pointer border ${
@@ -364,7 +374,7 @@ export default function Navbar({
                   {currentRole.replace('_', ' ')}
                 </span>
               </button>
-            )}
+            ) : null}
 
             {/* Cart Selector Panel Trigger */}
             <button

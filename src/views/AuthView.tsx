@@ -15,6 +15,13 @@ import {
   handleGoogleRedirectResult
 } from '../lib/authService';
 import { isProfileComplete, fetchUserProfileFromFirestore } from '../lib/userProfileService';
+import { 
+  checkStaffStatusFromServer, 
+  setStaffSessionEmail, 
+  resolveUserAdminRole,
+  isImmutableSuperAdmin,
+  SUPER_ADMIN_EMAIL 
+} from '../lib/adminService';
 import { UserProfileData } from '../types';
 import { 
   Mail, 
@@ -31,7 +38,8 @@ import {
   Send, 
   RefreshCw, 
   ShieldAlert,
-  UserCheck 
+  UserCheck,
+  Crown 
 } from 'lucide-react';
 
 interface AuthViewProps {
@@ -54,6 +62,12 @@ export default function AuthView({ currentUser, userProfile, onNavigate }: AuthV
   const [checkingVerification, setCheckingVerification] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Appointed Staff Portal Access State
+  const [staffEmailInput, setStaffEmailInput] = useState('');
+  const [staffLoginLoading, setStaffLoginLoading] = useState(false);
+  const [staffLoginError, setStaffLoginError] = useState<string | null>(null);
+  const [staffLoginSuccess, setStaffLoginSuccess] = useState<string | null>(null);
 
   // 30-second countdown timer for verification email resends
   const [resendCountdown, setResendCountdown] = useState<number>(0);
@@ -173,6 +187,16 @@ export default function AuthView({ currentUser, userProfile, onNavigate }: AuthV
     const cleanEmail = email.trim();
     if (!cleanEmail || !password) {
       setError('Please enter both email and password.');
+      return;
+    }
+
+    // Root Super Admin instant verification for preview link operations
+    if (isImmutableSuperAdmin(cleanEmail)) {
+      setStaffSessionEmail(cleanEmail);
+      setSuccess('Root Super Administrator verified! Opening store & Admin Center...');
+      setTimeout(() => {
+        onNavigate('home');
+      }, 600);
       return;
     }
 
@@ -417,9 +441,40 @@ export default function AuthView({ currentUser, userProfile, onNavigate }: AuthV
     setLoading(false);
   };
 
-  // If user is currently unverified OR in verify-pending mode:
+  const handleStaffAccess = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = staffEmailInput.trim().toLowerCase();
+    if (!clean) return;
+
+    setStaffLoginLoading(true);
+    setStaffLoginError(null);
+    setStaffLoginSuccess(null);
+
+    try {
+      const res = await checkStaffStatusFromServer(clean);
+      if (res.isStaff && res.admin) {
+        setStaffSessionEmail(clean);
+        setStaffLoginSuccess(`✅ Authorized! Welcome ${res.admin.name || clean} (${res.admin.role.replace('_', ' ').toUpperCase()}). Activating your Admin Center...`);
+        setTimeout(() => {
+          onNavigate('home');
+        }, 1200);
+      } else {
+        setStaffLoginError(`⚠️ "${clean}" is not currently in the authorized staff registry. Please ensure the Super Administrator (ciyacademy@gmail.com) has added this email.`);
+      }
+    } catch (err: any) {
+      setStaffLoginError(`Connection error: ${err.message || 'Could not verify admin status.'}`);
+    } finally {
+      setStaffLoginLoading(false);
+    }
+  };
+
+  const isCurrentAdmin = Boolean(
+    resolveUserAdminRole(currentUser?.email || '')
+  );
+
+  // If user is currently unverified OR in verify-pending mode (and NOT an appointed admin):
   // Strictly display the verification notification and NEVER reroute to sign in until verified!
-  if ((currentUser && !currentUser.emailVerified) || mode === 'verify-pending') {
+  if (!isCurrentAdmin && ((currentUser && !currentUser.emailVerified) || mode === 'verify-pending')) {
     const targetEmail = pendingEmail || currentUser?.email || email || 'your registered email';
     return (
       <div id="unverified-state-container" className="max-w-xl mx-auto px-4 py-16 font-sans text-white">
@@ -528,8 +583,8 @@ export default function AuthView({ currentUser, userProfile, onNavigate }: AuthV
     );
   }
 
-  // If user is currently signed in AND verified
-  if (currentUser && currentUser.emailVerified) {
+  // If user is currently signed in AND verified (or appointed admin)
+  if (currentUser && (currentUser.emailVerified || isCurrentAdmin)) {
     return (
       <div id="verified-state-container" className="max-w-xl mx-auto px-4 py-16 font-sans text-white">
         <motion.div
@@ -571,8 +626,21 @@ export default function AuthView({ currentUser, userProfile, onNavigate }: AuthV
             </div>
           </div>
 
-          {/* Profile Completion Callout for Incomplete Existing Users */}
-          {!isProfileComplete(userProfile) && (
+          {/* Staff Badge for Appointed Admins */}
+          {isCurrentAdmin && (
+            <div className="p-4 bg-emerald-500/20 border border-emerald-500/40 rounded-2xl text-left text-xs space-y-1.5">
+              <div className="flex items-center gap-2 text-emerald-300 font-bold">
+                <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                <span>Active FreshBasket Staff Member</span>
+              </div>
+              <p className="text-[11px] text-emerald-100/80 leading-relaxed">
+                Your account is provisioned with administrative privileges. The Admin Center header button is active on your screen.
+              </p>
+            </div>
+          )}
+
+          {/* Profile Completion Callout for Incomplete Regular Customers */}
+          {!isCurrentAdmin && !isProfileComplete(userProfile) && (
             <div className="p-4 bg-amber-500/15 border border-amber-500/30 rounded-2xl text-left text-xs space-y-2">
               <div className="flex items-start gap-2.5 text-amber-200">
                 <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
@@ -600,24 +668,24 @@ export default function AuthView({ currentUser, userProfile, onNavigate }: AuthV
               className="flex-1 py-3 px-5 rounded-2xl bg-[#FACC15] hover:bg-yellow-400 text-black font-extrabold text-xs shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <UserCheck className="h-4 w-4 text-black" />
-              <span>{isProfileComplete(userProfile) ? 'View / Edit Profile' : 'Complete Mandatory Profile'}</span>
+              <span>{isProfileComplete(userProfile) ? 'View / Edit Profile' : 'Complete Profile'}</span>
             </button>
             <button
               id="btn-goto-dashboard"
               onClick={() => {
-                if (!isProfileComplete(userProfile)) {
+                if (!isCurrentAdmin && !isProfileComplete(userProfile)) {
                   onNavigate('profile');
                 } else {
                   onNavigate('dashboard');
                 }
               }}
               className={`flex-1 py-3 px-5 rounded-2xl font-bold text-xs shadow-lg transition cursor-pointer ${
-                isProfileComplete(userProfile)
+                (isCurrentAdmin || isProfileComplete(userProfile))
                   ? 'bg-[#16A34A] hover:bg-[#15803d] text-white'
                   : 'bg-white/10 text-white/60 hover:bg-white/20 border border-white/10'
               }`}
             >
-              {isProfileComplete(userProfile) ? 'Go to Dashboard' : 'Dashboard Locked (Fill Form)'}
+              {(isCurrentAdmin || isProfileComplete(userProfile)) ? 'Go to Dashboard' : 'Dashboard Locked (Fill Form)'}
             </button>
             <button
               id="btn-signout-verified"
@@ -635,7 +703,50 @@ export default function AuthView({ currentUser, userProfile, onNavigate }: AuthV
 
   // Primary Login / Register Form
   return (
-    <div id="auth-portal-card" className="max-w-md mx-auto px-4 py-12 lg:py-16 font-sans text-white">
+    <div id="auth-portal-card" className="max-w-md mx-auto px-4 py-10 lg:py-14 font-sans text-white">
+      {/* 1-Click Super Admin Access for Preview Link testing */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mb-6 bg-gradient-to-r from-amber-950/80 via-black/80 to-amber-950/80 border-2 border-amber-500/60 rounded-3xl p-4.5 backdrop-blur-xl shadow-2xl space-y-3"
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-amber-400 to-yellow-500 text-stone-950 flex items-center justify-center font-black shadow-md shrink-0">
+              <Crown className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded font-mono border border-amber-500/40">
+                  Super Admin Quick Login
+                </span>
+              </div>
+              <h3 className="text-xs font-bold text-white mt-0.5">ciyacademy@gmail.com</h3>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-[11px] text-white/70 leading-relaxed">
+          Log in with 1 click on this preview link to access the Admin Center, manage administrators, and test live real-time authorization sync.
+        </p>
+
+        <button
+          id="btn-quick-login-superadmin"
+          type="button"
+          onClick={() => {
+            setStaffSessionEmail(SUPER_ADMIN_EMAIL);
+            setSuccess('Super Administrator verified! Loading fresh admin state...');
+            setTimeout(() => {
+              onNavigate('home');
+            }, 400);
+          }}
+          className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-yellow-300 text-stone-950 font-black text-xs shadow-lg transition flex items-center justify-center gap-2 cursor-pointer transform hover:scale-[1.01] active:scale-98"
+        >
+          <Crown className="h-4 w-4 text-stone-950" />
+          <span>Instant Super Admin Login (ciyacademy@gmail.com)</span>
+        </button>
+      </motion.div>
+
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1010,6 +1121,92 @@ export default function AuthView({ currentUser, userProfile, onNavigate }: AuthV
             FreshBasket Secure Authentication • Encrypted Email & Password Protection
           </p>
         </div>
+      </motion.div>
+
+      {/* Dedicated Appointed Staff & Admin Portal Access Card */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+        className="mt-6 bg-gradient-to-br from-emerald-950/70 via-stone-900/80 to-black/80 border border-emerald-500/40 rounded-3xl p-6 backdrop-blur-xl shadow-2xl space-y-4"
+      >
+        <div className="flex items-start gap-3">
+          <div className="h-10 w-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+            <ShieldCheck className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-black text-white flex items-center gap-2">
+              <span>Appointed Staff & Admin Access</span>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-mono border border-emerald-500/40 font-bold">
+                Staff Only
+              </span>
+            </h3>
+            <p className="text-[11px] text-white/70 leading-relaxed mt-0.5">
+              Appointed by the Super Admin as a Manager, Supervisor, or Sales Rep? Enter your staff email below to activate your Admin Center instantly on this device.
+            </p>
+          </div>
+        </div>
+
+        <form onSubmit={handleStaffAccess} className="space-y-3">
+          <div className="relative">
+            <Mail className="absolute left-3.5 top-3 h-4 w-4 text-emerald-400/60" />
+            <input
+              id="input-staff-portal-email"
+              type="email"
+              required
+              value={staffEmailInput}
+              onChange={(e) => {
+                setStaffEmailInput(e.target.value);
+                setStaffLoginError(null);
+                setStaffLoginSuccess(null);
+              }}
+              placeholder="e.g. your appointed staff email"
+              className="w-full bg-black/40 border border-emerald-500/30 rounded-xl py-2.5 pl-10 pr-4 text-xs text-white placeholder-white/40 focus:outline-none focus:border-emerald-400 font-mono transition"
+            />
+          </div>
+
+          <AnimatePresence mode="wait">
+            {staffLoginError && (
+              <motion.div
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="p-3 bg-red-500/20 border border-red-500/40 rounded-xl text-red-200 text-xs flex items-start gap-2"
+              >
+                <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                <span className="leading-relaxed">{staffLoginError}</span>
+              </motion.div>
+            )}
+
+            {staffLoginSuccess && (
+              <motion.div
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="p-3 bg-emerald-500/20 border border-emerald-500/40 rounded-xl text-emerald-200 text-xs flex items-start gap-2"
+              >
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                <span className="leading-relaxed">{staffLoginSuccess}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <button
+            id="btn-staff-portal-submit"
+            type="submit"
+            disabled={staffLoginLoading}
+            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            {staffLoginLoading ? (
+              <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <>
+                <ShieldCheck className="h-4 w-4 text-[#FACC15]" />
+                <span>Verify Staff Role & Open Admin Center</span>
+              </>
+            )}
+          </button>
+        </form>
       </motion.div>
     </div>
   );

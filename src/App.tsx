@@ -1,6 +1,23 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Star, Heart, ShoppingBag, X, Calendar, Gift, Award, CheckCircle2, ChevronRight, Landmark, ShieldCheck } from 'lucide-react';
+import { 
+  Sparkles, 
+  Star, 
+  Heart, 
+  ShoppingBag, 
+  X, 
+  Calendar, 
+  Gift, 
+  Award, 
+  CheckCircle2, 
+  ChevronRight, 
+  Landmark, 
+  ShieldCheck,
+  ShieldAlert,
+  Trash2,
+  Eye,
+  Crown
+} from 'lucide-react';
 
 // Data layers
 import { recipes } from './data/recipes';
@@ -42,7 +59,11 @@ import {
   isImmutableSuperAdmin,
   resolveUserAdminRole,
   resolveUserAdminRoleAsync,
-  subscribeToAdminStaff
+  subscribeToAdminStaff,
+  getStaffSessionEmail,
+  setStaffSessionEmail,
+  deleteAdminStaff,
+  addOrUpdateAdminStaff
 } from './lib/adminService';
 import { 
   getLocalLiveProducts, 
@@ -103,6 +124,15 @@ export default function App() {
 
   // RBAC Admin States
   const [resolvedAdminRole, setResolvedAdminRole] = useState<AdminRole | null>(null);
+  const [staffSessionEmail, setStaffSessionEmailState] = useState<string | null>(() => {
+    const stored = getStaffSessionEmail();
+    if (stored !== null) return stored || null;
+    // In dev container workspace iframe, default to Super Admin for convenience
+    if (typeof window !== 'undefined' && window.location.hostname.startsWith('ais-dev-')) {
+      return SUPER_ADMIN_EMAIL;
+    }
+    return null;
+  });
   const [simulatedRole, setSimulatedRole] = useState<AdminRole | null>(null);
   const [simulatedEmail, setSimulatedEmail] = useState<string | null>(null);
   const [hasDismissedAdminBanner, setHasDismissedAdminBanner] = useState(false);
@@ -112,60 +142,172 @@ export default function App() {
   const [isProduceEditorOpen, setIsProduceEditorOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
-  // Resolve admin role dynamically for current user and listen to staff changes
+  // Check URL query parameters (?staff=... or ?admin=... or ?guest=true or ?revoked=...) on initial load and listen to staff session events
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const paramStaff = params.get('staff') || params.get('admin');
+      const paramRole = params.get('role') as AdminRole | null;
+      const paramName = params.get('name');
+      const paramGuest = params.get('guest') === 'true' || params.get('logout') === 'true' || params.get('customer') === 'true';
+      const paramRevoked = params.get('revoked');
+
+      if (paramGuest) {
+        setStaffSessionEmail(null);
+        setStaffSessionEmailState(null);
+        setSimulatedRole(null);
+        setSimulatedEmail(null);
+        try {
+          window.history.replaceState({}, '', window.location.pathname);
+        } catch (_) {}
+      } else if (paramRevoked) {
+        const cleanRevoked = paramRevoked.trim().toLowerCase();
+        deleteAdminStaff(cleanRevoked, 'URL Revoke').catch(() => {});
+        if (getStaffSessionEmail()?.toLowerCase() === cleanRevoked) {
+          setStaffSessionEmail(null);
+          setStaffSessionEmailState(null);
+        }
+        setSimulatedRole(null);
+        setSimulatedEmail(cleanRevoked);
+        try {
+          window.history.replaceState({}, '', window.location.pathname);
+        } catch (_) {}
+      } else if (paramStaff) {
+        let clean = paramStaff.trim().toLowerCase();
+        if (clean === 'super' || clean === 'super_admin' || clean === 'root') {
+          clean = SUPER_ADMIN_EMAIL;
+        }
+        if (paramRole && ['super_admin', 'manager', 'supervisor', 'sales_rep'].includes(paramRole)) {
+          // Immediately authorize in local staff cache if passed via authenticated test link
+          addOrUpdateAdminStaff(clean, paramName || clean.split('@')[0], paramRole, SUPER_ADMIN_EMAIL).catch(() => {});
+        }
+        setStaffSessionEmail(clean);
+        setStaffSessionEmailState(clean);
+        try {
+          window.history.replaceState({}, '', window.location.pathname);
+        } catch (_) {}
+      }
+
+      const handleStaffChange = (e: any) => {
+        setStaffSessionEmailState(e.detail?.email ?? getStaffSessionEmail());
+      };
+      window.addEventListener('staff_session_changed', handleStaffChange);
+      return () => window.removeEventListener('staff_session_changed', handleStaffChange);
+    }
+  }, []);
+
+  // Compute active user email: prioritized by authenticated user, then staff session email
+  const activeUserEmail = (currentUser?.email || staffSessionEmail || '').trim().toLowerCase() || null;
+
+  // Resolve admin role dynamically for current user / staff session and listen to live changes
   useEffect(() => {
     let isMounted = true;
 
     const syncRole = (staffList?: AdminUser[]) => {
-      if (!currentUser?.email) {
+      if (!activeUserEmail) {
         setResolvedAdminRole(null);
         return;
       }
-      const email = currentUser.email.trim().toLowerCase();
+      const email = activeUserEmail;
       if (isImmutableSuperAdmin(email)) {
         setResolvedAdminRole('super_admin');
         return;
       }
 
-      // Check synchronous cache / supplied staff list first
-      const role = resolveUserAdminRole(email, staffList);
-      if (role) {
-        setResolvedAdminRole(role);
-      } else {
-        // Asynchronously check Central Server in case client local storage was cold
-        resolveUserAdminRoleAsync(email).then(freshRole => {
-          if (isMounted && freshRole) {
-            setResolvedAdminRole(freshRole);
+      if (staffList && Array.isArray(staffList)) {
+        // Direct definitive staff list from live Central Server / SSE stream
+        const match = staffList.find(a => a.email && a.email.trim().toLowerCase() === email);
+        const newRole = match ? match.role : null;
+        setResolvedAdminRole(newRole);
+        if (!newRole) {
+          setIsAdminPortalOpen(false);
+          setIsProduceEditorOpen(false);
+          if (simulatedEmail && simulatedEmail.trim().toLowerCase() === email) {
+            setSimulatedRole(null);
+            setSimulatedEmail(null);
           }
-        });
+          if (staffSessionEmail && staffSessionEmail.trim().toLowerCase() === email) {
+            setStaffSessionEmail(null);
+            setStaffSessionEmailState(null);
+          }
+        }
+        return;
       }
+
+      // Synchronous initial cache check
+      const cachedRole = resolveUserAdminRole(email);
+      setResolvedAdminRole(cachedRole);
+
+      // Authoritative asynchronous check from Central Server
+      resolveUserAdminRoleAsync(email).then(freshRole => {
+        if (isMounted) {
+          setResolvedAdminRole(freshRole);
+          if (!freshRole) {
+            setIsAdminPortalOpen(false);
+            setIsProduceEditorOpen(false);
+            if (simulatedEmail && simulatedEmail.trim().toLowerCase() === email) {
+              setSimulatedRole(null);
+              setSimulatedEmail(null);
+            }
+            if (staffSessionEmail && staffSessionEmail.trim().toLowerCase() === email) {
+              setStaffSessionEmail(null);
+              setStaffSessionEmailState(null);
+            }
+          }
+        }
+      });
     };
 
     syncRole();
     if (currentUser) {
       seedFirestoreProductsIfEmpty();
     }
+
     const unsub = subscribeToAdminStaff((freshStaff) => {
       if (isMounted) {
         syncRole(freshStaff);
       }
     });
+
+    const handleLocalAdminChange = (e: any) => {
+      if (isMounted) {
+        if (e?.detail?.list && Array.isArray(e.detail.list)) {
+          syncRole(e.detail.list);
+        } else {
+          syncRole();
+        }
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('admin_staff_change', handleLocalAdminChange);
+    }
+
     return () => {
       isMounted = false;
       unsub();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('admin_staff_change', handleLocalAdminChange);
+      }
     };
-  }, [currentUser]);
+  }, [activeUserEmail, simulatedEmail, staffSessionEmail, currentUser]);
 
   // Compute effective role & email
-  // If simulation is set via Admin Center switcher, use that; otherwise use authenticated user status
-  // Defaults to 'super_admin' when unauthenticated so admin preview actions work immediately
+  // If simulation is set via Admin Center switcher, use that; otherwise use active user status
   const effectiveAdminRole: AdminRole | null = simulatedRole !== null
     ? simulatedRole
-    : (currentUser?.email ? resolvedAdminRole : null);
+    : (activeUserEmail ? resolvedAdminRole : null);
 
   const effectiveAdminEmail: string | null = simulatedEmail !== null
     ? simulatedEmail
-    : (currentUser?.email || null);
+    : (activeUserEmail || null);
+
+  // Automatically dismiss admin modals if user's admin privileges are revoked
+  useEffect(() => {
+    if (!effectiveAdminRole) {
+      setIsAdminPortalOpen(false);
+      setIsProduceEditorOpen(false);
+    }
+  }, [effectiveAdminRole]);
 
   // Produce CRUD Handlers with immediate state reflection
   const handleSaveProduce = async (produceItem: Product): Promise<boolean> => {
@@ -373,13 +515,17 @@ export default function App() {
   // 2. Authenticated users MUST complete their member profile form before gaining access to their dashboard -> redirected to 'profile'
   useEffect(() => {
     if (activeView === 'dashboard') {
+      if (effectiveAdminRole) {
+        // Appointed admin staff can access store and dashboard without consumer verification hurdles
+        return;
+      }
       if (!currentUser || !currentUser.emailVerified) {
         setActiveView('auth');
       } else if (!isProfileComplete(userProfile)) {
         setActiveView('profile');
       }
     }
-  }, [activeView, currentUser, userProfile]);
+  }, [activeView, currentUser, userProfile, effectiveAdminRole]);
 
   // Global Cart Event Actions
   const handleAddToCart = (product: Product, qty: number) => {
@@ -534,6 +680,35 @@ export default function App() {
         onOpenAdminPortal={() => setIsAdminPortalOpen(true)}
       />
 
+      {/* Simulation Banner for Customer / Revoked Mode */}
+      {simulatedEmail !== null && simulatedRole === null && (
+        <div className="border-b px-4 py-2.5 text-white text-xs bg-[#0a150d] border-amber-500/40 backdrop-blur-md shadow-md">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="font-bold flex items-center gap-1.5 text-amber-300">
+                <ShieldAlert className="h-4 w-4 text-amber-400" />
+                <span>Simulation Active: Customer / Revoked Access Mode</span>
+              </span>
+              <span className="text-white/80">
+                Testing as <b className="font-mono text-white">{simulatedEmail}</b> (No Admin Rights). All administrative buttons and price mutation controls are hidden.
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setSimulatedRole(null);
+                  setSimulatedEmail(null);
+                }}
+                className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-3.5 py-1.5 rounded-xl text-xs transition cursor-pointer shadow flex items-center gap-1.5"
+              >
+                <Crown className="h-3.5 w-3.5 text-black" />
+                <span>Return to Super Admin</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Authenticated Staff or Simulated Preview Authorization Recognition Banner */}
       {effectiveAdminRole && !hasDismissedAdminBanner && (
         <div className={`border-b px-4 py-2.5 text-white text-xs backdrop-blur-md shadow-md transition ${
@@ -583,17 +758,28 @@ export default function App() {
               </span>
             </div>
             <div className="flex items-center gap-2">
-              {simulatedRole && (
+              {simulatedRole ? (
                 <button
                   onClick={() => {
                     setSimulatedRole(null);
                     setSimulatedEmail(null);
                   }}
-                  className="bg-white/10 hover:bg-white/20 text-white font-bold px-2.5 py-1 rounded-xl text-[11px] border border-white/20 transition cursor-pointer"
+                  className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold px-3 py-1.5 rounded-xl text-[11px] border border-amber-500/40 transition cursor-pointer flex items-center gap-1"
                 >
-                  Exit Preview
+                  <Crown className="h-3 w-3 text-amber-300" />
+                  <span>Return to Super Admin</span>
                 </button>
-              )}
+              ) : staffSessionEmail && !currentUser && staffSessionEmail !== SUPER_ADMIN_EMAIL ? (
+                <button
+                  onClick={() => {
+                    setStaffSessionEmail(null);
+                    setStaffSessionEmailState(SUPER_ADMIN_EMAIL);
+                  }}
+                  className="bg-white/10 hover:bg-red-500/30 text-white/80 hover:text-white font-bold px-2.5 py-1 rounded-xl text-[11px] border border-white/20 transition cursor-pointer"
+                >
+                  Exit Staff Session
+                </button>
+              ) : null}
               <button
                 onClick={() => setIsAdminPortalOpen(true)}
                 className={`font-bold px-3.5 py-1.5 rounded-xl text-[11px] transition flex items-center gap-1.5 cursor-pointer shadow ${

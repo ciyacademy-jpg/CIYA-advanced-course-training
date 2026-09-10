@@ -28,7 +28,8 @@ import {
   CheckCheck,
   TrendingUp,
   Calendar,
-  Send
+  Send,
+  Eye
 } from 'lucide-react';
 import { Product, AdminRole, AdminUser } from '../types';
 import { 
@@ -38,7 +39,9 @@ import {
   addOrUpdateAdminStaff, 
   deleteAdminStaff, 
   isImmutableSuperAdmin,
-  subscribeToAdminStaff
+  subscribeToAdminStaff,
+  getStaffSessionEmail,
+  setStaffSessionEmail
 } from '../lib/adminService';
 import { HARVEST_CATEGORIES, deleteLiveProduct, syncAllProductsToFirestore } from '../lib/productService';
 import { AdminProduceModal } from './AdminProduceModal';
@@ -81,6 +84,7 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteStaffConfirmEmail, setDeleteStaffConfirmEmail] = useState<string | null>(null);
   const [isDeletingStaffEmail, setIsDeletingStaffEmail] = useState<string | null>(null);
+  const [copiedStaffEmail, setCopiedStaffEmail] = useState<string | null>(null);
 
   // Supervisor Quality Hub State
   const [supervisorFilter, setSupervisorFilter] = useState<'all' | 'spoilage_risk' | 'low_stock' | 'organic'>('all');
@@ -99,6 +103,8 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
   const [isAddingStaff, setIsAddingStaff] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [lastAppointedStaff, setLastAppointedStaff] = useState<{ email: string; name: string; role: AdminRole } | null>(null);
+  const [lastRevokedEmail, setLastRevokedEmail] = useState<string | null>(null);
+  const [copiedRevokeLink, setCopiedRevokeLink] = useState(false);
 
   const permissions = getAdminPermissions(currentRole);
 
@@ -178,12 +184,24 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            {onSelectRoleForPreview && (
+              <button
+                type="button"
+                onClick={() => {
+                  onSelectRoleForPreview('super_admin', SUPER_ADMIN_EMAIL);
+                }}
+                className="flex-1 bg-amber-500 hover:bg-amber-400 text-black font-bold py-3 px-4 rounded-xl text-center text-xs transition cursor-pointer shadow flex items-center justify-center gap-1.5"
+              >
+                <Crown className="h-4 w-4 text-black" />
+                <span>Activate Super Admin ({SUPER_ADMIN_EMAIL})</span>
+              </button>
+            )}
             {onNavigateToAuth && (
               <button
                 onClick={onNavigateToAuth}
                 className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-4 rounded-xl text-center text-xs transition cursor-pointer"
               >
-                Sign In with Admin Account
+                Sign In with Other Staff Account
               </button>
             )}
             <button
@@ -298,6 +316,16 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
     setIsDeletingStaffEmail(cleanEmail);
     setDeleteStaffConfirmEmail(null);
 
+    // If currently simulating, reset preview immediately
+    if (isSimulatingRole) {
+      onSelectRoleForPreview?.(null);
+    }
+
+    // Clear staff session if this browser was running as this staff member
+    if (getStaffSessionEmail()?.toLowerCase() === cleanEmail) {
+      setStaffSessionEmail(null);
+    }
+
     // Optimistically update list so the UI responds immediately
     const prevList = [...adminStaffList];
     setAdminStaffList(prev => prev.filter(s => s.email.trim().toLowerCase() !== cleanEmail));
@@ -305,9 +333,13 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
     try {
       const res = await deleteAdminStaff(cleanEmail, currentEmail || SUPER_ADMIN_EMAIL);
       if (res.success) {
-        setStaffActionStatus({ type: 'success', text: res.message });
+        setLastRevokedEmail(cleanEmail);
+        setStaffActionStatus({ 
+          type: 'success', 
+          text: `Admin access for ${cleanEmail} was completely revoked! That user's Admin Center has been terminated.` 
+        });
         const updated = await fetchAdminStaff();
-        if (updated && updated.length > 0) {
+        if (updated && Array.isArray(updated)) {
           setAdminStaffList(updated);
         }
       } else {
@@ -363,7 +395,7 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
             <span className="font-mono font-bold text-white bg-white/5 px-2.5 py-1 rounded-lg border border-white/10">
               {currentEmail || 'Not Authenticated'}
             </span>
-            {currentEmail?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ? (
+            {isImmutableSuperAdmin(currentEmail) ? (
               <span className="inline-flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-1 rounded-lg font-bold">
                 <Crown className="h-3.5 w-3.5 text-amber-400" />
                 Root Super Admin (Immutable)
@@ -1094,7 +1126,8 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                       type="button"
                       onClick={() => {
                         const origin = typeof window !== 'undefined' ? window.location.origin : '';
-                        const msg = `Hi ${lastAppointedStaff.name || 'there'}! You have been granted ${lastAppointedStaff.role.replace('_', ' ').toUpperCase()} admin privileges on FreshBasket NG. To access your portal, visit ${origin} and click 'Sign In with Google' using ${lastAppointedStaff.email}. Your Admin Center and produce controls will activate automatically!`;
+                        const targetOrigin = origin.includes('ais-dev-') ? origin.replace('ais-dev-', 'ais-pre-') : origin;
+                        const msg = `Hi ${lastAppointedStaff.name || 'there'}! You have been granted ${lastAppointedStaff.role.replace('_', ' ').toUpperCase()} admin privileges on FreshBasket NG. To access your portal, visit ${targetOrigin}/?staff=${encodeURIComponent(lastAppointedStaff.email)}&role=${lastAppointedStaff.role}&name=${encodeURIComponent(lastAppointedStaff.name)}. Your Admin Center and produce controls will activate automatically!`;
                         navigator.clipboard.writeText(msg);
                         setCopiedInvite(true);
                         setTimeout(() => setCopiedInvite(false), 3000);
@@ -1103,6 +1136,29 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                     >
                       {copiedInvite ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
                       <span>{copiedInvite ? 'Copied to Clipboard!' : 'Copy Onboarding Message'}</span>
+                    </button>
+                  </div>
+                )}
+
+                {staffActionStatus.type === 'success' && lastRevokedEmail && (
+                  <div className="pt-2 border-t border-emerald-800/60 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] text-emerald-200/80 font-normal">
+                      Test revocation in your Preview Link tab:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                        const targetOrigin = origin.includes('ais-dev-') ? origin.replace('ais-dev-', 'ais-pre-') : origin;
+                        const revokeUrl = `${targetOrigin}/?revoked=${encodeURIComponent(lastRevokedEmail)}`;
+                        navigator.clipboard.writeText(revokeUrl);
+                        setCopiedRevokeLink(true);
+                        setTimeout(() => setCopiedRevokeLink(false), 3000);
+                      }}
+                      className="bg-red-900/60 hover:bg-red-800 text-red-200 font-bold px-3 py-1.5 rounded-xl text-[11px] flex items-center gap-1.5 transition cursor-pointer shadow border border-red-700/50"
+                    >
+                      {copiedRevokeLink ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
+                      <span>{copiedRevokeLink ? 'Copied Revoke Link!' : 'Copy Revoke Test Link'}</span>
                     </button>
                   </div>
                 )}
@@ -1191,10 +1247,43 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
 
             {/* Current Staff Registry Table */}
             <div className="space-y-3">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                <span>Active Administrator Registry ({adminStaffList.length})</span>
-              </h3>
+              {/* Informational Banner: How Appointed Users Access the Admin Center On Their Own End */}
+              <div className="bg-emerald-950/50 border border-emerald-500/40 rounded-2xl p-4 text-xs text-emerald-200 space-y-2 shadow-lg">
+                <div className="flex items-center gap-2 font-bold text-white text-sm">
+                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                  <span>How Appointed Users Access Their Admin Center On Their Own End</span>
+                </div>
+                <p className="text-white/80 text-[11px] leading-relaxed">
+                  When you grant an admin position below, the user can immediately access their Admin Center and badges on their computer or mobile phone through either of these two methods:
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+                  <div className="bg-black/40 border border-emerald-500/30 rounded-xl p-2.5 space-y-1">
+                    <span className="font-bold text-emerald-300 text-[11px] flex items-center gap-1.5">
+                      <Copy className="h-3 w-3" />
+                      <span>Option 1: Direct 1-Click Link</span>
+                    </span>
+                    <p className="text-[10px] text-white/70">
+                      Click <b>"Copy Link"</b> in the table below and share it with the user. When opened, it automatically authenticates their staff session with their exact assigned role.
+                    </p>
+                  </div>
+                  <div className="bg-black/40 border border-emerald-500/30 rounded-xl p-2.5 space-y-1">
+                    <span className="font-bold text-emerald-300 text-[11px] flex items-center gap-1.5">
+                      <ShieldCheck className="h-3 w-3" />
+                      <span>Option 2: Sign In Page (Staff Portal)</span>
+                    </span>
+                    <p className="text-[10px] text-white/70">
+                      The user opens FreshBasket, clicks <b>Sign In</b>, and types their appointed email into the <b>Appointed Staff Login</b> box to activate their Admin Center instantly.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                  <span>Active Administrator Registry ({adminStaffList.length})</span>
+                </h3>
+              </div>
 
               <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
                 <table className="w-full text-left text-xs text-white">
@@ -1204,7 +1293,7 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                       <th className="p-4">Assigned Position</th>
                       <th className="p-4">Permissions Scope</th>
                       <th className="p-4">Provisioned By</th>
-                      <th className="p-4 text-right">Actions</th>
+                      <th className="p-4 text-right">Access Link / Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -1260,52 +1349,96 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
                           </td>
 
                           <td className="p-4 text-right">
-                            {isRoot ? (
-                              <span className="text-[10px] text-amber-400/80 font-bold bg-amber-950/40 px-2.5 py-1 rounded border border-amber-500/30 inline-block">
-                                Permanent Root
-                              </span>
-                            ) : (permissions.canManageAdmins || currentRole === 'super_admin' || isImmutableSuperAdmin(currentEmail)) ? (
-                              deleteStaffConfirmEmail === staff.email ? (
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <button
-                                    onClick={() => handleDeleteStaff(staff.email)}
-                                    disabled={isDeletingStaffEmail === staff.email}
-                                    className="bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow"
-                                    title="Confirm Revocation"
-                                  >
-                                    {isDeletingStaffEmail === staff.email ? (
-                                      <>
-                                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                        <span>Revoking...</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                        <span>Confirm Revoke</span>
-                                      </>
-                                    )}
-                                  </button>
-                                  <button
-                                    onClick={() => setDeleteStaffConfirmEmail(null)}
-                                    disabled={isDeletingStaffEmail === staff.email}
-                                    className="text-white/60 hover:text-white px-2 py-1 text-xs cursor-pointer"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              ) : (
+                            <div className="flex items-center justify-end gap-2">
+                              {/* Copy 1-Click Access Link for this staff member */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                                  const targetOrigin = origin.includes('ais-dev-') ? origin.replace('ais-dev-', 'ais-pre-') : origin;
+                                  const directUrl = `${targetOrigin}/?staff=${encodeURIComponent(staff.email)}&role=${staff.role}&name=${encodeURIComponent(staff.name || '')}`;
+                                  navigator.clipboard.writeText(directUrl);
+                                  setCopiedStaffEmail(staff.email);
+                                  setTimeout(() => setCopiedStaffEmail(null), 3000);
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer border border-white/15 transition shadow-sm shrink-0"
+                                title={`Copy 1-click preview link for ${staff.name || staff.email} (${staff.role.replace('_', ' ').toUpperCase()})`}
+                              >
+                                {copiedStaffEmail === staff.email ? (
+                                  <>
+                                    <Check className="h-3 w-3 text-emerald-400" />
+                                    <span className="text-emerald-300 font-bold">Copied Preview Link!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="h-3 w-3 text-emerald-400" />
+                                    <span>Copy Preview Link</span>
+                                  </>
+                                )}
+                              </button>
+
+                              {!isRoot && onSelectRoleForPreview && (
                                 <button
-                                  onClick={() => setDeleteStaffConfirmEmail(staff.email)}
-                                  className="text-red-400 hover:text-red-300 hover:bg-red-500/20 px-3 py-1.5 rounded-xl transition cursor-pointer border border-red-500/30 hover:border-red-500/60 flex items-center gap-1.5 text-xs font-semibold ml-auto"
-                                  title="Revoke admin position"
+                                  type="button"
+                                  onClick={() => {
+                                    onSelectRoleForPreview(staff.role, staff.email);
+                                    onClose();
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/40 text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition shadow-sm shrink-0"
+                                  title={`Test FreshBasket exactly as ${staff.name || staff.email} (${staff.role.replace('_', ' ').toUpperCase()})`}
                                 >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                  <span>Revoke</span>
+                                  <Eye className="h-3 w-3 text-blue-300" />
+                                  <span>Test View</span>
                                 </button>
-                              )
-                            ) : (
-                              <span className="text-[10px] text-white/30 italic">Protected</span>
-                            )}
+                              )}
+
+                              {isRoot ? (
+                                <span className="text-[10px] text-amber-400/80 font-bold bg-amber-950/40 px-2.5 py-1 rounded border border-amber-500/30 inline-block">
+                                  Permanent Root
+                                </span>
+                              ) : (permissions.canManageAdmins || currentRole === 'super_admin' || isImmutableSuperAdmin(currentEmail)) ? (
+                                deleteStaffConfirmEmail === staff.email ? (
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      onClick={() => handleDeleteStaff(staff.email)}
+                                      disabled={isDeletingStaffEmail === staff.email}
+                                      className="bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow"
+                                      title="Confirm Revocation"
+                                    >
+                                      {isDeletingStaffEmail === staff.email ? (
+                                        <>
+                                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                          <span>Revoking...</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                          <span>Confirm Revoke</span>
+                                        </>
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={() => setDeleteStaffConfirmEmail(null)}
+                                      disabled={isDeletingStaffEmail === staff.email}
+                                      className="text-white/60 hover:text-white px-2 py-1 text-xs cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setDeleteStaffConfirmEmail(staff.email)}
+                                    className="text-red-400 hover:text-red-300 hover:bg-red-500/20 px-2.5 py-1.5 rounded-xl transition cursor-pointer border border-red-500/30 hover:border-red-500/60 flex items-center gap-1.5 text-xs font-semibold"
+                                    title="Revoke admin position"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                    <span>Revoke</span>
+                                  </button>
+                                )
+                              ) : (
+                                <span className="text-[10px] text-white/30 italic">Protected</span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1477,6 +1610,45 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({
 
                 <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 rounded-xl transition cursor-pointer">
                   {currentRole === 'sales_rep' ? 'Currently Active' : 'Switch to Sales Rep'}
+                </button>
+              </div>
+
+              {/* Public Shopper Mode (Test No-Admin Customer Experience) */}
+              <div 
+                onClick={() => {
+                  if (onSelectRoleForPreview) onSelectRoleForPreview(null, 'shopper@freshbasket.ng');
+                  onClose();
+                }}
+                className={`p-5 rounded-2xl border transition cursor-pointer flex flex-col justify-between space-y-4 md:col-span-2 ${
+                  currentRole === null
+                    ? 'bg-slate-900/60 border-slate-400 shadow-xl ring-2 ring-slate-400/20'
+                    : 'bg-white/5 border-white/10 hover:border-slate-400/50 hover:bg-white/10'
+                }`}
+              >
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase text-slate-300 bg-white/10 px-2.5 py-1 rounded-full border border-white/20">
+                      Public Customer & Shopper
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-bold">NON-ADMIN STOREFRONT</span>
+                  </div>
+                  <h4 className="text-sm font-bold text-white font-mono">Customer / Shopper Experience Mode</h4>
+                  <p className="text-xs text-white/70">
+                    Experience FreshBasket exactly as regular customers and shoppers see it. All administrative navigation buttons and produce mutation controls are completely hidden. A floating banner will allow you to return to Super Admin anytime.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5 pt-3 border-t border-white/10 text-xs font-mono grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="text-red-400 flex items-center gap-1.5">
+                    <X className="h-3.5 w-3.5" /> <span>No Admin Center Button</span>
+                  </div>
+                  <div className="text-red-400 flex items-center gap-1.5">
+                    <X className="h-3.5 w-3.5" /> <span>No Produce Price or Stock Controls</span>
+                  </div>
+                </div>
+
+                <button className="w-full bg-white/10 hover:bg-white/20 text-white font-bold text-xs py-2 rounded-xl transition cursor-pointer">
+                  Switch to Customer Storefront View
                 </button>
               </div>
             </div>

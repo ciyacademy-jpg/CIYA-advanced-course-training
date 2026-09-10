@@ -160,23 +160,15 @@ export function saveLocalLiveProducts(productsList: Product[]): void {
  * so price updates, additions, and deletions synchronize live across both links instantly.
  */
 export function getAuthoritativeApiBase(): string {
-  if (typeof window === 'undefined') return '';
-  const hostname = window.location.hostname;
-  if (hostname.startsWith('ais-pre-')) {
-    const devHost = hostname.replace(/^ais-pre-/, 'ais-dev-');
-    return `${window.location.protocol}//${devHost}`;
-  }
+  // Always use relative URLs so all requests route same-origin without CORS or 302 redirect issues
   return '';
 }
 
 /**
- * Fetches the authoritative, live produce list.
- * 1. Checks Cloud Firestore for live cloud collection documents
- * 2. Fetches from the authoritative central server endpoint
- * 3. Falls back to local storage cache
+ * Fetches the authoritative, live produce list directly from Cloud Firestore.
+ * Falls back to local storage cache if offline.
  */
 export async function fetchLiveProductsFromServer(): Promise<Product[]> {
-  // 1. Try Firestore direct cloud collection first if available
   try {
     const colRef = collection(db, 'products');
     const snap = await getDocs(colRef);
@@ -193,51 +185,27 @@ export async function fetchLiveProductsFromServer(): Promise<Product[]> {
         return list;
       }
     }
-  } catch {
-    // Non-blocking fallback to authoritative server endpoint
+  } catch (err) {
+    console.warn('Firestore fetch products notice:', err);
   }
 
-  // 2. Fetch directly from authoritative central server
-  try {
-    const apiBase = getAuthoritativeApiBase();
-    const res = await fetch(`${apiBase}/api/products?_t=${Date.now()}`, {
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache'
-      }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.success && Array.isArray(data.products) && data.products.length > 0) {
-        const cleanList = data.products.map(normalizeProduct);
-        saveLocalLiveProducts(cleanList);
-        return cleanList;
-      }
-    }
-  } catch (err) {
-    console.warn('Network notice: could not fetch live products from server, using local:', err);
-  }
   return getLocalLiveProducts();
 }
 
 /**
- * Real-time subscriber for live products across:
- * 1. Server-Sent Events (SSE) from the central backend (instant sync across all user devices & preview links)
- * 2. Instant server/Firestore fetch on startup to eliminate stale refresh data
- * 3. Cloud Firestore real-time onSnapshot subscription
- * 4. Local storage & window events
+ * Real-time subscriber for live products relying directly on Cloud Firestore onSnapshot
  */
 export function subscribeToLiveProducts(callback: (prods: Product[]) => void): () => void {
-  // Immediately supply current state
+  // Immediately supply current cached state for instant display
   const initial = getLocalLiveProducts();
   callback(initial);
 
-  // Immediately query authoritative server/cloud to replace stale cached data
+  // Query Firestore immediately to ensure fresh state
   fetchLiveProductsFromServer().then((fresh) => {
     if (Array.isArray(fresh) && fresh.length > 0) {
       callback(fresh);
     }
-  });
+  }).catch(() => {});
 
   // 1. Instant local window event listener (zero-latency across modals and components)
   const handleLocalEvent = (e: Event) => {
@@ -268,33 +236,7 @@ export function subscribeToLiveProducts(callback: (prods: Product[]) => void): (
     window.addEventListener('storage', handleStorageEvent);
   }
 
-  // 3. Real-time Server-Sent Events (SSE) from Central Server (cross-container enabled)
-  let eventSource: EventSource | null = null;
-  if (typeof window !== 'undefined' && typeof EventSource !== 'undefined') {
-    try {
-      const apiBase = getAuthoritativeApiBase();
-      eventSource = new EventSource(`${apiBase}/api/products/stream`);
-      eventSource.addEventListener('products_updated', (e) => {
-        try {
-          const freshList = JSON.parse(e.data);
-          if (Array.isArray(freshList) && freshList.length > 0) {
-            const clean = freshList.map(normalizeProduct);
-            saveLocalLiveProducts(clean);
-            callback(clean);
-          }
-        } catch (err) {
-          console.warn('Error parsing SSE products update:', err);
-        }
-      });
-      eventSource.onerror = () => {
-        // EventSource automatically retries connections
-      };
-    } catch (err) {
-      console.warn('SSE connection notice:', err);
-    }
-  }
-
-  // 4. Real-time Cloud Firestore subscription (mirroring across all devices)
+  // 3. Real-time Cloud Firestore subscription (single source of truth)
   let unsubscribeFirestore = () => {};
   try {
     const colRef = collection(db, 'products');
@@ -316,20 +258,17 @@ export function subscribeToLiveProducts(callback: (prods: Product[]) => void): (
         }
       },
       (error) => {
-        // Handled silently if rules pending publication
+        console.warn('Firestore onSnapshot products error:', error);
       }
     );
-  } catch {
-    // Non-blocking
+  } catch (err) {
+    console.warn('Firestore subscription error:', err);
   }
 
   return () => {
     if (typeof window !== 'undefined') {
       window.removeEventListener(PRODUCTS_EVENT, handleLocalEvent);
       window.removeEventListener('storage', handleStorageEvent);
-    }
-    if (eventSource) {
-      eventSource.close();
     }
     unsubscribeFirestore();
   };
@@ -460,10 +399,7 @@ export async function syncAllProductsToFirestore(): Promise<{
  * - Creating new product: Super Admin ONLY
  * - Updating existing product: Super Admin or Manager
  * 
- * Synchronizes to:
- * 1. Central Server (/api/products) which persists and broadcasts via SSE to all other users immediately
- * 2. Local browser cache & instant window event
- * 3. Firestore cloud document
+ * Synchronizes directly to Cloud Firestore as the single source of truth.
  */
 export async function saveLiveProduct(
   product: Product,
@@ -500,7 +436,20 @@ export async function saveLiveProduct(
     };
   }
 
-  // Update local list
+  // 1. Write directly to Cloud Firestore as single source of truth — fail fast if write fails
+  try {
+    const docRef = doc(db, 'products', product.id);
+    await setDoc(docRef, cleanForFirestore(normalizeProduct(product)), { merge: true });
+  } catch (err: any) {
+    console.error('Failed to save product to Cloud Firestore:', err);
+    return {
+      success: false,
+      message: `Failed to save product to database: ${err?.message || 'Firestore write error'}`,
+      updatedList: currentList
+    };
+  }
+
+  // 2. Update local list only after Firestore write succeeds
   let updatedList: Product[];
   if (isNew) {
     updatedList = [product, ...currentList];
@@ -508,36 +457,7 @@ export async function saveLiveProduct(
     updatedList = currentList.map(p => p.id === product.id ? product : p);
   }
 
-  // 1. Save to local cache immediately and broadcast instant event
   saveLocalLiveProducts(updatedList);
-
-  // 2. Sync to Central Authoritative Server (Broadcasts to all connected users immediately via SSE)
-  try {
-    const apiBase = getAuthoritativeApiBase();
-    const res = await fetch(`${apiBase}/api/products`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        product,
-        role: operatorRole,
-        email: operatorEmail
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      console.log('[ProductService] Product saved to central server:', data.message);
-    }
-  } catch (err: any) {
-    console.warn('Central server product write notice (fallback to local):', err?.message);
-  }
-
-  // 3. Sync to Cloud Firestore in background
-  try {
-    const docRef = doc(db, 'products', product.id);
-    await setDoc(docRef, cleanForFirestore(normalizeProduct(product)), { merge: true });
-  } catch (err: any) {
-    console.warn('Firestore live product write notice:', err?.message);
-  }
 
   return {
     success: true,
@@ -550,10 +470,7 @@ export async function saveLiveProduct(
  * Deletes a produce product with role permission enforcement:
  * - Delete: Super Admin, Manager, or Supervisor
  * 
- * Synchronizes removal across:
- * 1. Central Server (/api/products/:id) + SSE broadcast
- * 2. Local browser cache & window event
- * 3. Firestore cloud document
+ * Synchronizes removal directly from Cloud Firestore as the single source of truth.
  */
 export async function deleteLiveProduct(
   productId: string,
@@ -581,32 +498,23 @@ export async function deleteLiveProduct(
   }
 
   const target = currentList.find(p => p.id === productId);
-  const updatedList = currentList.filter(p => p.id !== productId);
 
-  // 1. Update local cache immediately and broadcast
-  saveLocalLiveProducts(updatedList);
-
-  // 2. Sync deletion to Central Authoritative Server (Broadcasts to all connected users immediately via SSE)
-  try {
-    const apiBase = getAuthoritativeApiBase();
-    const res = await fetch(`${apiBase}/api/products/${encodeURIComponent(productId)}`, {
-      method: 'DELETE'
-    });
-    if (res.ok) {
-      const data = await res.json();
-      console.log('[ProductService] Product deleted from central server:', data.message);
-    }
-  } catch (err: any) {
-    console.warn('Central server product delete notice (fallback to local):', err?.message);
-  }
-
-  // 3. Sync to Cloud Firestore in background
+  // 1. Delete directly from Cloud Firestore — fail fast if deletion fails
   try {
     const docRef = doc(db, 'products', productId);
     await deleteDoc(docRef);
   } catch (err: any) {
-    console.warn('Firestore live product delete notice:', err?.message);
+    console.error('Failed to delete product from Cloud Firestore:', err);
+    return {
+      success: false,
+      message: `Failed to delete produce item from database: ${err?.message || 'Firestore delete error'}`,
+      updatedList: currentList
+    };
   }
+
+  // 2. Update local list only after Firestore delete succeeds
+  const updatedList = currentList.filter(p => p.id !== productId);
+  saveLocalLiveProducts(updatedList);
 
   return {
     success: true,

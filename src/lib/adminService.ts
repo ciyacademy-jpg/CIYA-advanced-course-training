@@ -5,7 +5,9 @@ import {
   getDocs, 
   setDoc, 
   deleteDoc, 
-  onSnapshot 
+  onSnapshot,
+  query,
+  where
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { AdminRole, AdminUser, AdminRolePermissions } from '../types';
@@ -131,41 +133,95 @@ export function saveLocalAdmins(admins: AdminUser[]): void {
       cleaned.unshift(DEFAULT_ADMINS[0]);
     }
     localStorage.setItem('freshbasket_admin_staff', JSON.stringify(cleaned));
+    localStorage.setItem('freshbasket_admin_staff_ts', Date.now().toString());
   } catch {
     // ignore
   }
 }
 
-/**
- * Fetches admin staff registry from Central Server or Firestore or local cache
- */
-export async function fetchAdminStaffFromServer(): Promise<AdminUser[]> {
+const STAFF_SESSION_KEY = 'freshbasket_staff_session_email';
+
+export function getStaffSessionEmail(): string | null {
   try {
-    const res = await fetch(`/api/admins?_t=${Date.now()}`, {
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache'
+    return localStorage.getItem(STAFF_SESSION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setStaffSessionEmail(email: string | null): void {
+  try {
+    if (email) {
+      localStorage.setItem(STAFF_SESSION_KEY, email.trim().toLowerCase());
+    } else {
+      localStorage.removeItem(STAFF_SESSION_KEY);
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('staff_session_changed', { detail: { email } }));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export async function checkStaffStatusFromServer(email: string): Promise<{ isStaff: boolean; admin?: AdminUser; message?: string }> {
+  const clean = (email || '').trim().toLowerCase();
+  if (!clean) return { isStaff: false, message: 'Invalid email' };
+  
+  if (isImmutableSuperAdmin(clean)) {
+    return {
+      isStaff: true,
+      admin: {
+        id: 'ciyacademy_gmail_com',
+        email: SUPER_ADMIN_EMAIL,
+        name: 'Super Administrator',
+        role: 'super_admin',
+        addedBy: 'Root',
+        addedAt: '2026-01-01T00:00:00.000Z',
+        isImmutable: true
       }
-    });
-    const contentType = res.headers.get('content-type') || '';
-    if (res.ok && contentType.includes('application/json')) {
-      const data = await res.json();
-      if (data && data.success && Array.isArray(data.admins) && data.admins.length > 0) {
-        const filtered = data.admins.filter((a: AdminUser) => !isPlaceholderAdmin(a.email));
-        saveLocalAdmins(filtered);
-        return filtered;
+    };
+  }
+
+  // Direct Firestore query (single source of truth)
+  try {
+    const id = sanitizeEmailToId(clean);
+    const docRef = doc(db, 'admins', id);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data() as AdminUser;
+      if (data && data.email && !isPlaceholderAdmin(data.email)) {
+        return { isStaff: true, admin: data };
+      }
+    }
+
+    const colRef = collection(db, 'admins');
+    const q = query(colRef, where('email', '==', clean));
+    const querySnap = await getDocs(q);
+    if (!querySnap.empty) {
+      const data = querySnap.docs[0].data() as AdminUser;
+      if (data && data.email && !isPlaceholderAdmin(data.email)) {
+        return { isStaff: true, admin: data };
       }
     }
   } catch (err) {
-    console.warn('Network notice: could not fetch admins from server, using local/firestore:', err);
+    console.warn('checkStaffStatusFromServer Firestore notice:', err);
   }
-  return fetchAdminStaff();
+
+  // Fallback to local staff list cache only if Firestore is offline
+  const localList = getLocalAdmins();
+  const match = localList.find(a => a.email.toLowerCase() === clean);
+  if (match) {
+    return { isStaff: true, admin: match };
+  }
+
+  return { isStaff: false, message: 'Email not found in authorized admin directory' };
 }
 
 /**
- * Fetches admin staff registry from Firestore or local cache
+ * Fetches admin staff registry directly from Cloud Firestore (single source of truth)
  */
-export async function fetchAdminStaff(): Promise<AdminUser[]> {
+export async function fetchAdminStaffFromServer(): Promise<AdminUser[]> {
   try {
     const colRef = collection(db, 'admins');
     const snap = await getDocs(colRef);
@@ -187,47 +243,26 @@ export async function fetchAdminStaff(): Promise<AdminUser[]> {
       return firestoreAdmins;
     }
   } catch (error) {
-    console.warn('Firestore fetchAdminStaff notice:', error);
+    console.warn('fetchAdminStaffFromServer Firestore error:', error);
   }
   return getLocalAdmins();
 }
 
 /**
- * Real-time listener for admin staff updates across SSE, Firestore, and local events
+ * Fetches admin staff registry (delegates directly to Firestore)
+ */
+export async function fetchAdminStaff(): Promise<AdminUser[]> {
+  return fetchAdminStaffFromServer();
+}
+
+/**
+ * Real-time listener for admin staff updates relying directly on Cloud Firestore onSnapshot
  */
 export function subscribeToAdminStaff(callback: (admins: AdminUser[]) => void): () => void {
-  // Supply immediate local state
+  // Supply immediate local cache state for instant UI display
   callback(getLocalAdmins());
 
-  // Query server to eliminate stale cached state
-  fetchAdminStaffFromServer().then(fresh => {
-    if (Array.isArray(fresh) && fresh.length > 0) {
-      callback(fresh);
-    }
-  });
-
-  // Server-Sent Events (SSE) for instant cross-device admin staff sync
-  let eventSource: EventSource | null = null;
-  if (typeof window !== 'undefined' && typeof EventSource !== 'undefined') {
-    try {
-      eventSource = new EventSource('/api/admins/stream');
-      eventSource.addEventListener('admins_updated', (e) => {
-        try {
-          const freshList = JSON.parse(e.data);
-          if (Array.isArray(freshList) && freshList.length > 0) {
-            const filtered = freshList.filter((a: AdminUser) => !isPlaceholderAdmin(a.email));
-            saveLocalAdmins(filtered);
-            callback(filtered);
-          }
-        } catch (err) {
-          console.warn('Error parsing SSE admin update:', err);
-        }
-      });
-    } catch (err) {
-      console.warn('SSE admin connection notice:', err);
-    }
-  }
-
+  // Direct Cloud Firestore onSnapshot listener for real-time synchronization
   let unsubscribeFirestore = () => {};
   try {
     const colRef = collection(db, 'admins');
@@ -248,22 +283,51 @@ export function subscribeToAdminStaff(callback: (admins: AdminUser[]) => void): 
           saveLocalAdmins(list);
           callback(list);
         } else {
-          callback(getLocalAdmins());
+          const defaultList = [DEFAULT_ADMINS[0]];
+          saveLocalAdmins(defaultList);
+          callback(defaultList);
         }
       },
       (error) => {
-        console.warn('subscribeToAdminStaff fallback to local:', error);
+        console.warn('subscribeToAdminStaff Firestore onSnapshot error:', error);
+        callback(getLocalAdmins());
       }
     );
-  } catch {
-    // ignore
+  } catch (err) {
+    console.warn('subscribeToAdminStaff Firestore initialization notice:', err);
+  }
+
+  // Instant sync when user focuses or returns to tab
+  const handleFocusOrVisible = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      fetchAdminStaffFromServer().then(fresh => {
+        if (Array.isArray(fresh)) {
+          callback(fresh);
+        }
+      }).catch(() => {});
+    }
+  };
+
+  // Same-window local synchronization
+  const handleLocalChange = () => {
+    callback(getLocalAdmins());
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('admin_staff_change', handleLocalChange);
+    window.addEventListener('storage', handleLocalChange);
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
   }
 
   return () => {
-    if (eventSource) {
-      eventSource.close();
-    }
     unsubscribeFirestore();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('admin_staff_change', handleLocalChange);
+      window.removeEventListener('storage', handleLocalChange);
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
+    }
   };
 }
 
@@ -309,7 +373,19 @@ export async function addOrUpdateAdminStaff(
     isImmutable
   };
 
-  // 1. Update local cache immediately
+  // 1. Write directly to Cloud Firestore as the single source of truth — fail fast if write fails
+  try {
+    const docRef = doc(db, 'admins', id);
+    await setDoc(docRef, newAdmin, { merge: true });
+  } catch (error: any) {
+    console.error('Failed to save admin to Cloud Firestore:', error);
+    return {
+      success: false,
+      message: `Failed to save admin to database: ${error?.message || 'Firestore write error'}`
+    };
+  }
+
+  // 2. Update local cache only after successful Firestore write
   const localList = getLocalAdmins();
   const existingIdx = localList.findIndex(a => a.email.toLowerCase() === cleanEmail);
   if (existingIdx >= 0) {
@@ -323,38 +399,19 @@ export async function addOrUpdateAdminStaff(
   }
   saveLocalAdmins(localList);
 
-  // 2. Persist to Central Server (Broadcasts to all devices via SSE)
-  try {
-    const res = await fetch('/api/admins', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: cleanEmail,
-        name: targetName.trim() || cleanEmail.split('@')[0],
-        role: newAdmin.role,
-        addedBy: operatorEmail || SUPER_ADMIN_EMAIL
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      console.log('[AdminService] Staff saved to central server:', data.message);
-    }
-  } catch (err: any) {
-    console.warn('Central server admin write notice:', err?.message);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('admin_staff_change', { 
+      detail: { type: 'upsert', admin: newAdmin, list: localList } 
+    }));
   }
 
-  // 3. Persist to Firestore if online
-  try {
-    const docRef = doc(db, 'admins', id);
-    await setDoc(docRef, newAdmin, { merge: true });
-  } catch (error: any) {
-    console.warn('Firestore set admin notice:', error?.message);
-  }
+  const roleLabel = newAdmin.role === 'super_admin' ? 'Super Administrator' :
+                    newAdmin.role === 'manager' ? 'Produce Manager' :
+                    newAdmin.role === 'supervisor' ? 'Quality Supervisor' : 'Sales Representative';
 
-  const roleLabel = newAdmin.role.replace('_', ' ').toUpperCase();
   return { 
     success: true, 
-    message: `Admin authorization granted to ${cleanEmail} as ${roleLabel}. When they sign in with this Gmail account, their admin role will be applied automatically.`,
+    message: `Admin authorization granted to ${cleanEmail} as ${roleLabel}. Admin privileges have been applied immediately.`,
     admin: newAdmin
   };
 }
@@ -362,6 +419,7 @@ export async function addOrUpdateAdminStaff(
 /**
  * Removes an admin position.
  * Super Admin is strictly immutable and cannot be deleted.
+ * Directly writes deletion to Cloud Firestore as single source of truth.
  */
 export async function deleteAdminStaff(
   targetEmail: string,
@@ -377,43 +435,54 @@ export async function deleteAdminStaff(
     };
   }
 
-  // 1. Update local cache
-  const localList = getLocalAdmins().filter(a => a.email.toLowerCase() !== cleanEmail);
-  saveLocalAdmins(localList);
-
   const id = sanitizeEmailToId(cleanEmail);
 
-  // 2. Delete from Central Server
-  try {
-    const res = await fetch(`/api/admins/${encodeURIComponent(id)}`, {
-      method: 'DELETE'
-    });
-    if (res.ok) {
-      const data = await res.json();
-      console.log('[AdminService] Staff removed from central server:', data.message);
-    }
-  } catch (err: any) {
-    console.warn('Central server admin delete notice:', err?.message);
-  }
-
-  // 3. Delete from Firestore (both sanitized ID and raw email to cover all schemas)
+  // 1. Delete from Cloud Firestore — fail fast if deletion fails
   try {
     const docRef = doc(db, 'admins', id);
     await deleteDoc(docRef);
+
+    if (cleanEmail !== id) {
+      try {
+        const altDocRef = doc(db, 'admins', cleanEmail);
+        await deleteDoc(altDocRef);
+      } catch (_) {}
+    }
+
+    try {
+      const colRef = collection(db, 'admins');
+      const q = query(colRef, where('email', '==', cleanEmail));
+      const snap = await getDocs(q);
+      for (const d of snap.docs) {
+        await deleteDoc(d.ref).catch(() => {});
+      }
+    } catch (_) {}
   } catch (error: any) {
-    console.warn('Firestore delete admin notice (id):', error?.message);
+    console.error('Failed to revoke admin in Cloud Firestore:', error);
+    return {
+      success: false,
+      message: `Failed to revoke admin in database: ${error?.message || 'Firestore delete error'}`
+    };
   }
 
-  if (cleanEmail !== id) {
-    try {
-      const altDocRef = doc(db, 'admins', cleanEmail);
-      await deleteDoc(altDocRef);
-    } catch (_) {}
+  // 2. Update local cache only after successful Firestore delete
+  const localList = getLocalAdmins().filter(a => a.email.toLowerCase() !== cleanEmail);
+  saveLocalAdmins(localList);
+
+  // If the deleted admin was active in this session, clear it immediately
+  if (getStaffSessionEmail()?.toLowerCase() === cleanEmail) {
+    setStaffSessionEmail(null);
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('admin_staff_change', { 
+      detail: { type: 'delete', email: cleanEmail, list: localList } 
+    }));
   }
 
   return {
     success: true,
-    message: `Admin position for ${cleanEmail} has been revoked.`
+    message: `Admin position for ${cleanEmail} has been revoked across all systems.`
   };
 }
 
@@ -438,7 +507,7 @@ export function resolveUserAdminRole(
 }
 
 /**
- * Resolves admin role asynchronously, fetching from Central Server if not cached locally
+ * Resolves admin role asynchronously with Cloud Firestore as the authoritative live source
  */
 export async function resolveUserAdminRoleAsync(userEmail: string | null | undefined): Promise<AdminRole | null> {
   if (!userEmail) return null;
@@ -448,11 +517,7 @@ export async function resolveUserAdminRoleAsync(userEmail: string | null | undef
     return 'super_admin';
   }
 
-  // 1. Check local cache first
-  const localMatch = resolveUserAdminRole(clean);
-  if (localMatch) return localMatch;
-
-  // 2. Direct Firestore document lookup (Crucial for static Firebase Hosting & multi-device sync)
+  // 1. Direct Cloud Firestore lookup (authoritative live database across all sessions)
   try {
     const id = sanitizeEmailToId(clean);
     const docRef = doc(db, 'admins', id);
@@ -460,29 +525,29 @@ export async function resolveUserAdminRoleAsync(userEmail: string | null | undef
     if (snap.exists()) {
       const data = snap.data() as AdminUser;
       if (data && data.role) {
-        // Save to local cache so subsequent checks are instant
-        const localList = getLocalAdmins();
-        if (!localList.some(a => a.email.toLowerCase() === clean)) {
-          localList.push(data);
-          saveLocalAdmins(localList);
-        }
         return data.role;
       }
     }
+
+    const colRef = collection(db, 'admins');
+    const q = query(colRef, where('email', '==', clean));
+    const querySnap = await getDocs(q);
+    if (!querySnap.empty) {
+      const data = querySnap.docs[0].data() as AdminUser;
+      if (data && data.role) {
+        return data.role;
+      }
+    }
+
+    // Found no admin record in Firestore
+    return null;
   } catch (err) {
     console.warn('Direct Firestore admin lookup notice:', err);
   }
 
-  // 3. Fetch fresh staff list from server if in full-stack environment
-  try {
-    const fresh = await fetchAdminStaffFromServer();
-    if (Array.isArray(fresh)) {
-      const match = fresh.find(a => a.email && a.email.trim().toLowerCase() === clean);
-      if (match) return match.role;
-    }
-  } catch (e) {
-    console.warn('resolveUserAdminRoleAsync server lookup notice:', e);
-  }
+  // 2. Fallback: Local cache check only if Firestore is offline
+  const localMatch = resolveUserAdminRole(clean);
+  if (localMatch) return localMatch;
 
   return null;
 }
